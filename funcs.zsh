@@ -22,7 +22,7 @@ ghkey() {
 }
 
 # Needs docker
-# terminate all running conatainers
+# terminate all running containers
 tercon() {
 	for c in $(docker ps -a | tail -n+2 | awk '{print $1}'); do
   		docker stop "${c}" || :
@@ -114,18 +114,29 @@ loadpg() {
    export GPG_TTY=$(tty)
 }
 
-export MY_CURRENT_FUCKING_CITY=Tunis # TODO: Upgrade
-weather() {
-  LOCATION="${MY_CURRENT_FUCKING_CITY}"
-    printf "%s" "$SEP1"
-    if [ "$IDENTIFIER" = "unicode" ]; then
-        printf "%s" "$(curl -s wttr.in/$LOCATION?format=1)"
-    else
-        printf "WEA %s" "$(curl -s wttr.in/$LOCATION?format=1 | grep -o "[0-9].*")"
-    fi
-    printf "%s\n" "$SEP2"
+## g for git, double l is for last, since I already have gl as git log.
+# anyways, this basically shows the diff of the last commit
+gll() {
+	 git show $(git log -1 --format=%H)
 }
 
+# gll & s for status, but typing s requires additional effort, so I made it c, like the git diff --stat
+gllc(){
+  git diff HEAD~1 HEAD --stat
+}
+
+# Kill all TMUX sessions
+txkill(){
+  tmux list-sessions -F '#S' | xargs -I {} tmux kill-session -t {}
+}
+
+# auto syncs my current gnome keybindings
+synckeys() {
+  local backup_dir="$HOME/personal/projects/dotfiles/other"
+  mkdir -p "$backup_dir"
+  dconf dump /org/gnome/settings-daemon/plugins/media-keys/ > "$backup_dir/keybindings.dconf"
+  cd "$HOME/personal/projects/dotfiles" && git add "$backup_dir/keybindings.dconf" && git commit -m "update GNOME keybindings" && git push
+}
 
 #### Get the total number of connected devices, needs `arp-scan`
 
@@ -157,30 +168,4 @@ genpass_mid() {
 
 genpass_hard() {
     openssl rand -base64 48 | tr -dc 'A-Za-z0-9!@#$%^&*()_+[]{}<>?,.:;' | head -c 32
-}
-
-
-
-## g for git, double l is for last, since I already have gl as git log.. in the .gitconfig file.
-# anyways, this basically shows the diff of the last commit
-gll() {
-	 git show $(git log -1 --format=%H)
-}
-
-# s for status, like the git diff --stat
-gllc(){
-  git diff HEAD~1 HEAD --stat
-}
-
-# Kill all TMUX sessions
-txkill(){
-  tmux list-sessions -F '#S' | xargs -I {} tmux kill-session -t {}
-}
-
-# auto syncs my current gnome keybindings
-synckeys() {
-  local backup_dir="$HOME/personal/projects/dotfiles/other"
-  mkdir -p "$backup_dir"
-  dconf dump /org/gnome/settings-daemon/plugins/media-keys/ > "$backup_dir/keybindings.dconf"
-  cd "$HOME/personal/projects/dotfiles" && git add "$backup_dir/keybindings.dconf" && git commit -m "update GNOME keybindings" && git push
 }
