@@ -169,3 +169,13 @@ genpass_mid() {
 genpass_hard() {
     openssl rand -base64 48 | tr -dc 'A-Za-z0-9!@#$%^&*()_+[]{}<>?,.:;' | head -c 32
 }
+
+# Function to display disk space in a human-readable sentence with green output
+diskspace() {
+  local df_output=$(df -h $HOME | tail -n 1)
+  local total=$(echo $df_output | awk '{print $2}')
+  local used=$(echo $df_output | awk '{print $3}')
+  local avail=$(echo $df_output | awk '{print $4}')
+  local sentence="Your total disk space is $total, with $used used and $avail available."
+  echo -e "\033[32m$sentence\033[0m"
+}
