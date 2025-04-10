@@ -170,6 +170,11 @@ genpass_hard() {
     openssl rand -base64 48 | tr -dc 'A-Za-z0-9!@#$%^&*()_+[]{}<>?,.:;' | head -c 32
 }
 
+# USE WITH CAUTION: DELETES ALL THE GIT BRANCHES EXCEPT FOR THE ONE YOU'RE ON RN
+dlb() {
+ git branch | grep -v "$(git rev-parse --abbrev-ref HEAD)" | xargs git branch -D
+}
+
 # Function to display disk space in a human-readable sentence with green output
 diskspace() {
   local df_output=$(df -h $HOME | tail -n 1)
@@ -178,4 +183,19 @@ diskspace() {
   local avail=$(echo $df_output | awk '{print $4}')
   local sentence="Your total disk space is $total, with $used used and $avail available."
   echo -e "\033[32m$sentence\033[0m"
+}
+
+# ================================================================
+#   WHISPER FUNCTION: Talk and get transcript in clipboard
+# ================================================================
+whisperclip() {
+  local AUDIO_PATH="/tmp/record.wav"
+  local MODEL_PATH="$HOME/whisper/whisper.cpp/models/ggml-medium.en.bin"
+  local WHISPER_BIN="$HOME/whisper/whisper.cpp/build/bin/whisper-cli"
+  echo -e "\e[1;34m🎙️  Recording... Press Ctrl+C when done.\e[0m"
+  arecord -f cd -t wav -r 16000 -c 1 "$AUDIO_PATH" || return
+  echo -e "\e[1;34m🧠 Transcribing with Whisper...\e[0m"
+  "$WHISPER_BIN" -m "$MODEL_PATH" -f "$AUDIO_PATH" -otxt || return
+  echo -e "\e[1;32m📋 Copied to clipboard:\e[0m"
+  cat "${AUDIO_PATH}.txt" | tee >(xclip -selection clipboard)
 }
