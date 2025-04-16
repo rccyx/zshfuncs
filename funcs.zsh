@@ -105,7 +105,7 @@ cpf() {
 # Needs xclip
 # short for copy command, copies the output of the command to the clipboard
 ccmd() {
-    "$@" | xclip -selection clipboard
+  eval "$@" | xclip -selection clipboard
 }
 
 # When the gpg dameon fucking up in TTY, you gotta lock in
