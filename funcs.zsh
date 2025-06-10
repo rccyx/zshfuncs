@@ -214,3 +214,11 @@ cleanup_node_modules() {
 whereami() {
   curl ipinfo.io
 }
+
+ remindme() {
+  if [ -z "$1" ] || [ -z "$2" ]; then
+    echo "Usage: remindme <seconds> <message>"
+    return 1
+  fi
+  (sleep "$1" && echo "Reminder: $2") &
+}
