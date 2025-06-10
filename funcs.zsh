@@ -199,3 +199,18 @@ whisperclip() {
   echo -e "\e[1;32m📋 Copied to clipboard:\e[0m"
   cat "${AUDIO_PATH}.txt" | tee >(xclip -selection clipboard)
 }
+
+# Show SSH public keys quick
+mykeys() {
+  cat ~/.ssh/*.pub
+}
+
+cleanup_node_modules() {
+  find . -name "node_modules" -type d -prune -exec rm -rf '{}' +
+  echo "All node_modules folders nuked tf out."
+}
+
+# Get public DNS and geo info
+whereami() {
+  curl ipinfo.io
+}
