@@ -210,7 +210,7 @@ cleanup_node_modules() {
   echo "All node_modules folders nuked tf out."
 }
 
-# Get public DNS and geo info
+# Get public DNS and geo info, can be wrong if mfs subnet into oblivion
 whereami() {
   curl ipinfo.io
 }
