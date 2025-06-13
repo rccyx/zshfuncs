@@ -222,3 +222,16 @@ whereami() {
   fi
   (sleep "$1" && echo "Reminder: $2") &
 }
+
+# Copies all files in current directory to clipboard as a tar archive, paste them later
+clipdir() {
+  if [ "$1" = "copy" ]; then
+    tar -cf - * 2>/dev/null | xclip -selection clipboard -i
+    echo -e "\e[1;32mDirectory contents copied to clipboard.\e[0m"
+  elif [ "$1" = "paste" ]; then
+    xclip -selection clipboard -o | tar -xvf - 2>/dev/null
+    echo -e "\e[1;32mDirectory contents pasted to $(pwd).\e[0m"
+  else
+    echo -e "\e[1;31mUsage: clipdir {copy|paste}\e[0m"
+  fi
+}
