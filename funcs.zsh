@@ -235,3 +235,33 @@ clipdir() {
     echo -e "\e[1;31mUsage: clipdir {copy|paste}\e[0m"
   fi
 }
+
+# Delete files and directories in current directory starting with a given string or matching a regex
+rmw() {
+  if [ -z "$1" ]; then
+    echo -e "\e[1;31mUsage: rmw <pattern>\e[0m"
+    return 1
+  fi
+  local pattern="$1"
+  if echo "test" | grep -E "$pattern" >/dev/null 2>&1; then
+    find . -maxdepth 1 -regex "./$pattern.*" -exec ls -ld {} \;
+    echo -e "\e[1;33mAbove items will be deleted. Confirm? (y/n)\e[0m"
+    read -r confirm
+    if [ "$confirm" = "y" ]; then
+      find . -maxdepth 1 -regex "./$pattern.*" -exec rm -rf {} \;
+      echo -e "\e[1;32mDeleted items matching '$pattern'.\e[0m"
+    else
+      echo -e "\e[1;31mDeletion cancelled.\e[0m"
+    fi
+  else
+    find . -maxdepth 1 -name "$pattern*" -exec ls -ld {} \;
+    echo -e "\e[1;33mAbove items will be deleted. Confirm? (y/n)\e[0m"
+    read -r confirm
+    if [ "$confirm" = "y" ]; then
+      find . -maxdepth 1 -name "$pattern*" -exec rm -rf {} \;
+      echo -e "\e[1;32mDeleted items starting with '$pattern'.\e[0m"
+    else
+      echo -e "\e[1;31mDeletion cancelled.\e[0m"
+    fi
+  fi
+}
