@@ -415,3 +415,40 @@ bth() {
     echo -e "\e[1;31m❌ Failed to connect to '$name'.\e[0m"
   fi
 }
+
+#
+#   show top repo contributors fast
+gitwho() {
+  git -C "${1:-.}" shortlog -sn --no-merges | head | nl -ba
+}
+
+# autogenerate QR for current Wi-Fi network
+wifiqr() {
+  if ! command -v qrencode &>/dev/null; then
+    echo -e "\e[1;31mqrencode not installed. Install with: sudo apt install qrencode\e[0m"
+    return 1
+  fi
+
+  local ssid password
+
+  ssid=$(nmcli -t -f active,ssid dev wifi | grep '^yes' | cut -d: -f2)
+  if [[ -z "$ssid" ]]; then
+    echo -e "\e[1;31mNot connected to any Wi-Fi.\e[0m"
+    return 1
+  fi
+
+  password=$(sudo grep -r '^psk=' /etc/NetworkManager/system-connections/ 2>/dev/null \
+              | grep "$ssid" | head -n1 | cut -d= -f2)
+
+  if [[ -z "$password" ]]; then
+    auth="nopass"
+  else
+    auth="WPA"
+  fi
+
+  local payload="WIFI:T:$auth;S:$ssid;P:$password;;"
+
+  echo -e "\e[1;36m📶 Current SSID: \e[0m$ssid"
+  echo -e "\e[1;34m🔳 Scan to connect:\e[0m"
+  echo "$payload" | qrencode -t ANSIUTF8
+}
