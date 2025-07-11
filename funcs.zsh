@@ -452,3 +452,8 @@ wifiqr() {
   echo -e "\e[1;34m🔳 Scan to connect:\e[0m"
   echo "$payload" | qrencode -t ANSIUTF8
 }
+
+# rerun last command with sudo
+please() {
+  sudo $(fc -ln -1)
+}
