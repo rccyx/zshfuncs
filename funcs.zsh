@@ -265,3 +265,55 @@ rmw() {
     fi
   fi
 }
+
+
+
+#   WIFI FUNCTION: Connect to Wi-Fi from terminal w/ clean UX (autocomplete etc..), just pulling the wifi icon from the tool bar is a pain in the ass, might as well do it from the terminal
+
+wifi() {
+  local interface=$(nmcli device | awk '/wifi|wl/ {print $1; exit}')
+  if [[ -z "$interface" ]]; then
+    echo -e "\e[1;31mNo Wi-Fi interface found.\e[0m"
+    return 1
+  fi
+
+  echo -e "\n\e[1;34m📡 Scanning Wi-Fi networks...\e[0m"
+  nmcli device wifi rescan > /dev/null 2>&1
+  sleep 1
+
+  local networks=$(nmcli -t -f SSID,SIGNAL device wifi list | awk -F: '!seen[$1]++ && length($1)>0 {printf "%-40s [%s%%]\n", $1, $2}')
+  if [[ -z "$networks" ]]; then
+    echo -e "\e[1;31mNo networks found.\e[0m"
+    return 1
+  fi
+
+  echo -e "\n\e[1;36mAvailable Networks:\e[0m"
+  echo "$networks"
+
+  echo -ne "\n\e[1;33m🔍 Enter SSID (or partial match): \e[0m"
+  read -r query
+
+  local matched_ssid=$(echo "$networks" | grep -i "$query" | head -n 1 | awk '{print $1}')
+  if [[ -z "$matched_ssid" ]]; then
+    echo -e "\e[1;31mNo match found for '$query'.\e[0m"
+    return 1
+  fi
+
+  echo -ne "\e[1;33m🔑 Password for '$matched_ssid' (leave blank for saved): \e[0m"
+  read -sr password
+  echo ""
+
+  if [[ -z "$password" ]]; then
+    echo -e "\e[1;34m⏳ Attempting to connect to saved network '$matched_ssid'...\e[0m"
+    nmcli device wifi connect "$matched_ssid"
+  else
+    echo -e "\e[1;34m🔗 Connecting to '$matched_ssid' with password...\e[0m"
+    nmcli device wifi connect "$matched_ssid" password "$password"
+  fi
+
+  if [[ $? -eq 0 ]]; then
+    echo -e "\e[1;32m✅ Connected to '$matched_ssid'\e[0m"
+  else
+    echo -e "\e[1;31m❌ Failed to connect.\e[0m"
+  fi
+}
