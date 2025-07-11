@@ -317,3 +317,29 @@ wifi() {
     echo -e "\e[1;31m❌ Failed to connect.\e[0m"
   fi
 }
+
+# Copies the last n lines of terminal history to clipboard
+cop() {
+  local n=${1:-100}  # default to 100 lines if not specified
+  local max_lines=5000  # safety cap to avoid massive mem dumps
+
+  if (( n > max_lines )); then
+    echo -e "\e[1;33mWarning: Clipping to $max_lines lines max.\e[0m"
+    n=$max_lines
+  fi
+
+  if [ -n "$TMUX" ]; then
+    # Inside tmux, use capture-pane
+    tmux capture-pane -pS -$n | xclip -selection clipboard
+    echo -e "\e[1;32m📋 Last $n lines copied from tmux pane.\e[0m"
+  elif command -v script >/dev/null 2>&1; then
+    # Not in tmux, fallback to script hack
+    local tmpfile=$(mktemp)
+    script -q -c "tail -n $n ~/.zsh_history" "$tmpfile"
+    tail -n $n "$tmpfile" | xclip -selection clipboard
+    rm -f "$tmpfile"
+    echo -e "\e[1;32m📋 Last $n history lines copied (approx).\e[0m"
+  else
+    echo -e "\e[1;31m❌ Not in tmux and 'script' not found. Can't fetch terminal buffer.\e[0m"
+  fi
+}
