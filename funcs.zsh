@@ -318,30 +318,28 @@ wifi() {
   fi
 }
 
-# Copies the last n lines of terminal history to clipboard
+# copy the last terminal buffer content in tmux only, `cop n` where n is the number of lines needed to copy
 cop() {
-  local n=${1:-100}  # default to 100 lines if not specified
-  local max_lines=5000  # safety cap to avoid massive mem dumps
-
-  if (( n > max_lines )); then
-    echo -e "\e[1;33mWarning: Clipping to $max_lines lines max.\e[0m"
-    n=$max_lines
-  fi
+  local n=${1:-100}
+  local max_lines=10000
+  (( n > max_lines )) && n=$max_lines
 
   if [ -n "$TMUX" ]; then
-    # Inside tmux, use capture-pane
-    tmux capture-pane -pS -$n | xclip -selection clipboard
-    echo -e "\e[1;32m📋 Last $n lines copied from tmux pane.\e[0m"
-  elif command -v script >/dev/null 2>&1; then
-    # Not in tmux, fallback to script hack
-    local tmpfile=$(mktemp)
-    script -q -c "tail -n $n ~/.zsh_history" "$tmpfile"
-    tail -n $n "$tmpfile" | xclip -selection clipboard
-    rm -f "$tmpfile"
-    echo -e "\e[1;32m📋 Last $n history lines copied (approx).\e[0m"
-  else
-    echo -e "\e[1;31m❌ Not in tmux and 'script' not found. Can't fetch terminal buffer.\e[0m"
+    tmux capture-pane -pS -$n | sed 's/\x1b\[[0-9;]*m//g' | xclip -selection clipboard
+    echo -e "\e[1;32m📋 Copied $n lines from tmux.\e[0m"
+    return
   fi
+
+  # Outside tmux, we fallback to zsh history
+  local histfile=${HISTFILE:-$HOME/.zsh_history}
+  if [[ ! -f $histfile ]]; then
+    echo -e "\e[1;31m❌ No zsh history file found.\e[0m"
+    return 1
+  fi
+
+  local lines=$(tail -n "$n" "$histfile" | sed 's/^: [0-9]*:[0-9]*;//')
+  echo "$lines" | xclip -selection clipboard
+  echo -e "\e[1;33m⚠️ Not in tmux. Pasted last $n commands, not visual buffer.\e[0m"
 }
 
 bth() {
