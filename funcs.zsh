@@ -532,3 +532,58 @@ extract() {
     *) echo "${red}[extract] Unsupported file type:${reset} $file" ;;
   esac
 }
+
+# ================================================================
+#   MINIMAL WIFI TOOLKIT — ZSH FUNCTIONS (v2)
+#   deps: nmcli ≥1.42, fzf, xclip
+#   drop‑in; source this file or copy into .zshrc
+# ================================================================
+clr(){ printf "\e[%sm" "$1"; }
+_err(){ clr 31; echo "❌ $1"; clr 0; }
+_ok(){ clr 32; echo "✅ $1"; clr 0; }
+_note(){ clr 34; echo "ℹ️  $1"; clr 0; }
+_iface(){ nmcli device | awk '/wifi|wl/ {print $1; exit}'; }
+_sel_ssid(){
+  local list choice
+  list=$(nmcli -t -f SSID,SIGNAL dev wifi list | awk -F: 'length($1){printf "%-40s [%s%%]\n",$1,$2}' | sort -k2 -nr)
+  [[ -z $list ]] && _err "no networks found" && return 1
+  choice=$(printf "%s\n" "$list" | fzf --prompt="📶 SSID ➜ " --no-multi)
+  [[ -z $choice ]] && _err "no ssid chosen" && return 1
+  printf "%s" "${choice%% *}"
+}
+
+# ---------- radio hard toggle ----------
+wifikill(){ nmcli radio wifi off && _ok "wifi radio off"; }
+wifiresume(){ nmcli radio wifi on  && _ok "wifi radio on";  }
+
+# ---------- reconnect quick ----------
+wifireconnect(){
+  local ssid=$(_sel_ssid) || return 1
+  _note "reconnecting to $ssid…"
+  if nmcli connection up "$ssid" 2>/dev/null || nmcli device wifi connect "$ssid" 2>/dev/null; then
+    _ok "connected to $ssid"
+  else
+    _err "failed to connect to $ssid"
+  fi
+}
+
+# ---------- show current password & copy ----------
+wifipass(){
+  local ssid pw
+  ssid=$(nmcli -t -f active,ssid dev wifi | awk -F: '$1=="yes"{print $2}')
+  [[ -z $ssid ]] && _err "not connected" && return 1
+  pw=$(sudo grep -r "^psk=" /etc/NetworkManager/system-connections/ 2>/dev/null | grep "\/$ssid" | head -n1 | cut -d= -f2)
+  if [[ -z $pw ]]; then
+    _note "open network or key not stored"; return 0
+  fi
+  echo "SSID: $ssid  PW: $pw" | xclip -selection clipboard
+  _ok "password copied to clipboard (also echoed below)"
+  echo "$pw"
+}
+
+# ---------- completion ----------
+_wifi_ssids(){
+  local -a ssids; ssids=( $(nmcli -t -f SSID dev wifi | sort -u) )
+  _describe 'ssid' ssids
+}
+compdef _wifi_ssids wifireconnect
