@@ -672,3 +672,24 @@ _cpw() {
     '2:destination dir:_path_files -/'
 }
 compdef _cpw cpw
+
+
+# cd into a file u fuzzy picked
+cdf() {
+  local file=$(fd . | fzf --prompt="📄 jump to file dir ⇢ ")
+  [[ -n $file ]] && cd "$(dirname "$file")"
+}
+
+# go into the root of the current git dir
+groot() {
+  cd "$(git rev-parse --show-toplevel)" || echo "Not in a git repo"
+}
+
+# open current repo in Github
+gopen() {
+  local remote=$(git remote get-url origin 2>/dev/null)
+  [[ -z $remote ]] && echo "No remote" && return
+  remote=${remote/git@github.com:/https:\/\/github.com\/}
+  remote=${remote/.git/}
+  xdg-open "$remote"
+}
