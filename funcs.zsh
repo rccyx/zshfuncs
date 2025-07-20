@@ -235,37 +235,35 @@ clipdir() {
     echo -e "\e[1;31mUsage: clipdir {copy|paste}\e[0m"
   fi
 }
-
 # Delete files and directories in current directory starting with a given string or matching a regex
 rmw() {
-  if [ -z "$1" ]; then
-    echo -e "\e[1;31mUsage: rmw <pattern>\e[0m"
+  local selection
+
+  # find deletable items
+  local items=($(find . -maxdepth 1 -mindepth 1 -not -path "./.git" 2>/dev/null))
+  if [[ ${#items[@]} -eq 0 ]]; then
+    echo -e "\e[1;31m❌ Nothing to delete here.\e[0m"
     return 1
   fi
-  local pattern="$1"
-  if echo "test" | grep -E "$pattern" >/dev/null 2>&1; then
-    find . -maxdepth 1 -regex "./$pattern.*" -exec ls -ld {} \;
-    echo -e "\e[1;33mAbove items will be deleted. Confirm? (y/n)\e[0m"
-    read -r confirm
-    if [ "$confirm" = "y" ]; then
-      find . -maxdepth 1 -regex "./$pattern.*" -exec rm -rf {} \;
-      echo -e "\e[1;32mDeleted items matching '$pattern'.\e[0m"
-    else
-      echo -e "\e[1;31mDeletion cancelled.\e[0m"
-    fi
-  else
-    find . -maxdepth 1 -name "$pattern*" -exec ls -ld {} \;
-    echo -e "\e[1;33mAbove items will be deleted. Confirm? (y/n)\e[0m"
-    read -r confirm
-    if [ "$confirm" = "y" ]; then
-      find . -maxdepth 1 -name "$pattern*" -exec rm -rf {} \;
-      echo -e "\e[1;32mDeleted items starting with '$pattern'.\e[0m"
-    else
-      echo -e "\e[1;31mDeletion cancelled.\e[0m"
-    fi
-  fi
-}
 
+  # use fzf to pick files/dirs
+  selection=$(printf "%s\n" "${items[@]}" | fzf --multi --height=60% --reverse --border \
+    --prompt="🗑️ Select items to delete ⇢ " \
+    --preview '[[ -d {} ]] && tree -C -L 2 {} || bat --style=plain --color=always {} 2>/dev/null || cat {}' \
+    --header="TAB to multi-select, ENTER to confirm")
+
+  [[ -z "$selection" ]] && echo -e "\e[1;33m⚠️ Cancelled. Nothing deleted.\e[0m" && return 1
+
+  echo -e "\e[1;31m❗ You're about to delete:\e[0m"
+  echo "$selection" | sed 's/^/   🔸 /'
+
+  echo -ne "\n\e[1;33mConfirm? [y/N] ⇢ \e[0m"
+  read -r confirm
+  [[ "$confirm" != "y" && "$confirm" != "Y" ]] && echo -e "\e[1;31m🛑 Aborted.\e[0m" && return 1
+
+  echo "$selection" | xargs -r rm -rf
+  echo -e "\e[1;32m✅ Deleted.\e[0m"
+}
 
 
 #   WIFI FUNCTION: Connect to Wi-Fi from terminal w/ clean UX (autocomplete etc..), just pulling the wifi icon from the tool bar is a pain in the ass, might as well do it from the terminal
