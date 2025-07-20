@@ -585,3 +585,90 @@ _wifi_ssids(){
   _describe 'ssid' ssids
 }
 compdef _wifi_ssids wifireconnect
+
+# smart copy ++ : cpw
+# deps: fzf, rsync, fd (for speed), zoxide (optional), tree (optional)
+
+cpw() {
+  local -a srcs
+  local dest picker_cmd
+
+  _pick_sources() {
+    if command -v fd >/dev/null; then
+      picker_cmd="fd --hidden --follow --exclude .git ."
+    else
+      picker_cmd="find . \( -type f -o -type d \) -not -path '*/\.git/*' -print"
+    fi
+    srcs=("${(@f)$(
+      eval "$picker_cmd" |
+      fzf --multi --height 60% --border --prompt="📄 pick files/dirs ⇢ " \
+          --preview '
+            [[ -d {} ]] && { command -v tree >/dev/null && tree -C -L 2 {} || ls -a {} ; } ||
+            { command -v bat >/dev/null && bat --style=numbers --color=always --line-range :200 {} || file {}; }'
+    )}")
+  }
+
+  _parents_of_pwd() {
+    local p="$PWD"
+    while [[ "$p" != "/" ]]; do
+      echo "$p"
+      p=${p:h}
+    done
+    echo "/"
+  }
+
+  _fzf_preview_dir() {
+    command -v tree >/dev/null && echo "tree -C -L 2 {}" || echo "ls -a {}"
+  }
+
+  _pick_dest() {
+    local -a dirlist
+    dirlist+=($(_parents_of_pwd))
+    if command -v zoxide >/dev/null; then
+      dirlist+=("${(@f)$(zoxide query -ls | awk '{$1=""; print substr($0,2)}')}")
+    fi
+    if command -v fd >/dev/null; then
+      dirlist+=("${(@f)$(fd -t d --max-depth 3 --hidden --exclude .git . $HOME)}")
+    else
+      dirlist+=("${(@f)$(find $HOME -maxdepth 3 -type d -not -path '*/\.git/*')}")
+    fi
+    dest="$(
+      printf '%s\n' "${dirlist[@]}" | awk '!seen[$0]++' | \
+      fzf --height 60% --border --prompt="📂 choose destination ⇢ " \
+          --preview="$(_fzf_preview_dir)"
+    )"
+    [[ -z $dest ]] && { echo "no destination chosen"; return 1; }
+    if [[ ! -d $dest ]]; then
+      read -q "REPLY?🔧 '$dest' doesn’t exist – create it? [y/N] "
+      echo
+      [[ $REPLY == [Yy] ]] || return 1
+      mkdir -p "$dest" || { echo "mkdir failed"; return 1; }
+    fi
+  }
+
+  # ----- arg parsing -----
+  if [[ $# -eq 0 ]]; then
+    _pick_sources || return 1
+    [[ ${#srcs[@]} -eq 0 ]] && echo "nothing selected" && return 1
+    _pick_dest   || return 1
+  elif [[ $# -eq 1 ]]; then
+    srcs=("$1")
+    _pick_dest   || return 1
+  else
+    srcs=("${@:1:$#-1}")
+    dest="${@: -1}"
+  fi
+
+  [[ -z $dest || ! -d $dest ]] && { echo "bad destination"; return 1; }
+
+  echo "🔄 copying → ${srcs[@]} → $dest"
+  rsync -aP "${srcs[@]}" "$dest"/
+}
+
+# ---------- completion ----------
+_cpw() {
+  _arguments \
+    '1:source files:_files' \
+    '2:destination dir:_path_files -/'
+}
+compdef _cpw cpw
