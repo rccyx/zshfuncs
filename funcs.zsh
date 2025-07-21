@@ -192,7 +192,7 @@ mykeys() {
   cat ~/.ssh/*.pub
 }
 
-cleanup_node_modules() {
+nodeclean() {
   find . -name "node_modules" -type d -prune -exec rm -rf '{}' +
   echo "All node_modules folders nuked tf out."
 }
