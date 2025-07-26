@@ -37,6 +37,15 @@ dprune() {
    docker volume prune -f
 }
 
+# docker container selector → live logs
+dlog() {
+  command -v fzf >/dev/null || { echo "fzf missing"; return 1; }
+  local id=$(docker ps --format '{{.ID}} {{.Image}}' | fzf | awk '{print $1}')
+  [[ -z $id ]] && return
+  echo "streaming logs for $id"
+  docker logs -f "$id"
+}
+
 # shows pretty `man` page.
 man () {
   env \
