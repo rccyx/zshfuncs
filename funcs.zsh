@@ -1,3 +1,19 @@
+# === MODULE LOADER & BUNDLER ===
+__zf_script="${(%):-%N}"
+__zf_dir="${__zf_script:A:h}"
+
+# If executed (not sourced) -> spit out full bundled script for easy piping
+if [[ "$ZSH_EVAL_CONTEXT" != *":file"* ]]; then
+  for file in "$__zf_dir/utils.zsh" "$__zf_script" "$__zf_dir/wifi.zsh" "$__zf_dir/bluetooth.zsh" "$__zf_dir/usb.zsh"; do
+    [[ -f "$file" ]] && cat "$file" && echo
+  done
+  exit 0
+fi
+
+# If sourced, pull in any external modules that are present
+for m in utils wifi bluetooth usb; do
+  [[ -f "$__zf_dir/${m}.zsh" ]] && source "$__zf_dir/${m}.zsh"
+done
 
 # ================================================================
 #    ZSH FUNCTION COLLECTION
