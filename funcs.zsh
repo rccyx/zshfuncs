@@ -370,34 +370,36 @@ clipdir() {
 }
 # Delete files and directories in current directory starting with a given string or matching a regex
 rmw() {
-  local selection
+  command -v fzf >/dev/null || { echo "fzf missing"; return 1 }
+  local finder selection
 
-  # find deletable items
-  local items=($(find . -maxdepth 1 -mindepth 1 -not -path "./.git" 2>/dev/null))
-  if [[ ${#items[@]} -eq 0 ]]; then
-    echo -e "\e[1;31m❌ Nothing to delete here.\e[0m"
-    return 1
+  # pick every file and dir under cwd, hide .git and other junk
+  if command -v fd >/dev/null; then
+    finder='fd --hidden --follow --exclude .git .'
+  else
+    finder='find . -mindepth 1 -not -path "*/\.git/*"'
   fi
 
-  # use fzf to pick files/dirs
-  selection=$(printf "%s\n" "${items[@]}" | fzf --multi --height=60% --reverse --border \
-    --prompt="🗑️ Select items to delete ⇢ " \
-    --preview '[[ -d {} ]] && tree -C -L 2 {} || bat --style=plain --color=always {} 2>/dev/null || cat {}' \
-    --header="TAB to multi-select, ENTER to confirm")
+  selection=$(
+    eval "$finder" | \
+    fzf --multi --height 60% --reverse --border \
+        --prompt="🗑️  select items to delete ⇢ " \
+        --preview '
+          [[ -d {} ]] && { command -v tree >/dev/null && tree -C -L 2 {} || ls -a {} ; } ||
+          { command -v bat >/dev/null && bat --style=numbers --color=always --line-range :200 {} || cat {} ; }'
+  )
 
-  [[ -z "$selection" ]] && echo -e "\e[1;33m⚠️ Cancelled. Nothing deleted.\e[0m" && return 1
+  [[ -z $selection ]] && echo "nothing chosen, aborting" && return 1
 
-  echo -e "\e[1;31m❗ You're about to delete:\e[0m"
+  echo "about to delete:"
   echo "$selection" | sed 's/^/   🔸 /'
-
-  echo -ne "\n\e[1;33mConfirm? [y/N] ⇢ \e[0m"
-  read -r confirm
-  [[ "$confirm" != "y" && "$confirm" != "Y" ]] && echo -e "\e[1;31m🛑 Aborted.\e[0m" && return 1
+  read -q "REPLY?confirm? [y/N] "
+  echo
+  [[ $REPLY =~ ^[Yy]$ ]] || { echo "aborted"; return 1 }
 
   echo "$selection" | xargs -r rm -rf
-  echo -e "\e[1;32m✅ Deleted.\e[0m"
+  echo "✅ deleted"
 }
-
 
 #   WIFI FUNCTION: Connect to Wi-Fi from terminal w/ clean UX (autocomplete etc..), just pulling the wifi icon from the tool bar is a pain in the ass, might as well do it from the terminal
 wifi() {
