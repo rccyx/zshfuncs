@@ -963,6 +963,17 @@ netspeed() {
     echo -e "\e[1;32m📋 Copied to clipboard.\e[0m"
   fi
 }
+
+# counts the lines of code in your current codebase
+# needs pnpm
+loc() {
+  local dir="${1:-.}"
+  pnpm dlx cloc "$dir" \
+    --exclude-dir='node_modules,dist,out,.next,build,.turbo,.vercel,.git,.venv,__pycache__,target,vendor' \
+    --not-match-f='.*lock|.*min.js|.*.svg|.*.map|.*.log'
+}
+
+
 # ===============  COMPLETIONS  ==================
 compdef _usbdev usbmount usbumount usbformat usbwipe usbperf usbburn usbls
 _usbdev(){
