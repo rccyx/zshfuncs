@@ -973,6 +973,61 @@ loc() {
     --not-match-f='.*lock|.*min.js|.*.svg|.*.map|.*.log'
 }
 
+# ================================================================
+#   cpd — copy all readable text files from a directory to clipboard
+#
+#   - skips binaries and common junk (node_modules, .git, .venv, etc.)
+#   - strips ANSI codes
+#   - warns if dir >10MB
+#   - supports fzf dir picker
+#   - deps: fzf, xclip, file, (fd optional)
+# ================================================================
+cpd() {
+  local dir total_bytes max_mb=10 warn=$'\u26A0'
+  local -a ignore_dirs=("*/.git/*" "*/node_modules/*" "*/.venv/*" "*/__pycache__/*" "*/dist/*" "*/build/*")
+
+  # ── choose directory ─────────────────────────────────────────
+  if [[ -n $1 ]]; then
+    dir="$1"
+  else
+    command -v fzf >/dev/null || { _err "fzf not installed — pass a dir"; return 1; }
+    if command -v fd >/dev/null; then
+      dir=$(fd -t d --hidden --exclude .git . | fzf --prompt='📂 pick dir ⇢ ' --height 60% --border --reverse)
+    else
+      dir=$(find . -type d -not -path '*/.git/*' | fzf --prompt='📂 pick dir ⇢ ' --height 60% --border --reverse)
+    fi
+  fi
+
+  [[ -z $dir ]]       && { _err "cancelled"; return 1; }
+  [[ ! -d $dir ]]     && { _err "'$dir' is not a directory"; return 1; }
+
+  # ── size check ───────────────────────────────────────────────
+  total_bytes=$(du -sb "$dir" | awk '{print $1}')
+  if (( total_bytes > max_mb*1024*1024 )); then
+    read -q "REPLY?$warn  $((total_bytes/1024/1024)) MB > $max_mb MB, copy anyway? [y/N] "
+    echo
+    [[ $REPLY =~ ^[Yy]$ ]] || { _err "aborted"; return 1; }
+  fi
+
+  # ── dump & copy ──────────────────────────────────────────────
+  {
+    cd "$dir" || { _err "cd failed"; return 1; }
+    find . -type f \
+      $(for i in "${ignore_dirs[@]}"; do printf "! -path %q " "$i"; done) \
+      -print0 | sort -z | while IFS= read -r -d '' f; do
+        if command -v file >/dev/null && ! file --mime "$f" | grep -q text; then
+          echo "# $f [binary skipped]"
+        else
+          echo "# $f"
+          sed -e 's/\x1b\[[0-9;]*m//g' "$f"
+          echo
+        fi
+    done
+  } | xclip -selection clipboard
+
+  _ok "directory '$dir' copied → clipboard (size: $(du -sh "$dir" | awk '{print $1}'))"
+}
+
 
 # ===============  COMPLETIONS  ==================
 compdef _usbdev usbmount usbumount usbformat usbwipe usbperf usbburn usbls
