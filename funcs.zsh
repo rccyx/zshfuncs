@@ -28,6 +28,10 @@ _note(){ clr 34; echo "ℹ️  $1"; clr 0; }
 ghkey() {
  bash <(curl -L https://raw.githubusercontent.com/AshGw/dotfiles/main/.ssh/_gh_gen.sh )
 }
+vv(){
+  nvim "$(fzf)"
+}
+
 # ================================================================
 #   DOCKER QUICK‑STRIKE FUNCTIONS
 #   deps: docker ≥20, fzf
