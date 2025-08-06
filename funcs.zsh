@@ -275,6 +275,25 @@ synckeys() {
   cd "$HOME/personal/projects/dotfiles" && git add "$backup_dir/keybindings.dconf" && git commit -m "update GNOME keybindings" && git push
 }
 
+# Syncs manually installed apt packages into dotfiles and commits
+syncapt() {
+  local backup_dir="$HOME/personal/projects/dotfiles/other"
+  local output_file="$backup_dir/apt-installed.txt"
+
+  mkdir -p "$backup_dir"
+
+  # Save only the manually installed packages (not dependencies)
+  comm -23 \
+    <(apt-mark showmanual | sort) \
+    <(gzip -dc /var/log/installer/initial-status.gz | awk '/Package: / { print $2 }' | sort) \
+    > "$output_file"
+
+  # Git commit and push
+  cd "$HOME/personal/projects/dotfiles" || { _err "dotfiles repo not found"; return 1; }
+  git add "$output_file"
+  git commit -m "update manually installed apt packages"
+  git push && _ok "APT packages synced"
+}
 #### Get the total number of connected devices, needs `arp-scan`
 
 connected-devices(){
