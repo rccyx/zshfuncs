@@ -1051,10 +1051,6 @@ cpd() {
   _ok "directory '$dir' copied → clipboard (size: $(du -sh "$dir" | awk '{print $1}'))"
 }
 
-cpdl(){
-  cpd()
-  lay()
-}
 
 # ===============  COMPLETIONS  ==================
 compdef _usbdev usbmount usbumount usbformat usbwipe usbperf usbburn usbls
