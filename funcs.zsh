@@ -40,6 +40,32 @@ _pick_ct(){ docker ps --format '{{.ID}}  {{.Image}}  {{.Names}}' \
             | fzf --prompt="🐳 pick container ⇢ " --height 60% --border --reverse \
             | awk '{print $1}'; }
 
+
+# Generate a TOTP code via oathtool, secret entered interactively.
+# Usage: tfa            → prompts for secret (hidden)
+#        tfa <secret>   → uses provided secret directly
+tfa() {
+  local secret code
+
+  if [[ -n "$1" ]]; then
+    secret="$1"
+  else
+    print -n "TOTP secret: "
+    stty -echo
+    read -r secret
+    stty echo
+    print
+  fi
+
+  code=$(oathtool "$secret") || { echo "❌ oathtool failed"; return 1; }
+  echo "$code"
+
+  if command -v xclip >/dev/null 2>&1; then
+    printf "%s" "$code" | xclip -selection clipboard
+    echo "📋 Copied to clipboard."
+  fi
+}
+
 # jump into a running container (falls back to sh if bash missing)
 dinto(){
   local id=$(_pick_ct) || { _err "no container"; return 1; }
