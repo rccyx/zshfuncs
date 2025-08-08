@@ -1,5 +1,5 @@
 # open repo on GitHub
-gitbrowse() {
+gbrowse() {
   local remote
   remote=$(git config --get remote.origin.url)
   remote=${remote/git@github.com:/https:\/\/github.com\/}
