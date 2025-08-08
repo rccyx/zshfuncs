@@ -32,16 +32,6 @@ vv(){
   nvim "$(fzf)"
 }
 
-# ================================================================
-#   DOCKER QUICK‑STRIKE FUNCTIONS
-#   deps: docker ≥20, fzf
-# ================================================================
-_pick_ct(){ docker ps --format '{{.ID}}  {{.Image}}  {{.Names}}' \
-            | fzf --prompt="🐳 pick container ⇢ " --height 60% --border --reverse \
-            | awk '{print $1}'; }
-
-
-# Generate a TOTP code via oathtool, secret entered interactively.
 # Usage: tfa            → prompts for secret (hidden)
 #        tfa <secret>   → uses provided secret directly
 tfa() {
@@ -65,6 +55,15 @@ tfa() {
     echo "📋 Copied to clipboard."
   fi
 }
+
+
+# ================================================================
+#   DOCKER QUICK‑STRIKE FUNCTIONS
+#   deps: docker ≥20, fzf
+# ================================================================
+_pick_ct(){ docker ps --format '{{.ID}}  {{.Image}}  {{.Names}}' \
+            | fzf --prompt="🐳 pick container ⇢ " --height 60% --border --reverse \
+            | awk '{print $1}'; }
 
 # jump into a running container (falls back to sh if bash missing)
 dinto(){
