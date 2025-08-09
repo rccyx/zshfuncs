@@ -1,13 +1,28 @@
-# open repo on GitHub
-gbrowse() {
+# stands for "browse", opens  the current repo on GitHub
+bws() {
   local remote
   remote=$(git config --get remote.origin.url)
   remote=${remote/git@github.com:/https:\/\/github.com\/}
   remote=${remote/.git/}
   xdg-open "$remote"
 }
+# PRs
+prs() {
+  local remote
+  remote=$(git config --get remote.origin.url)
+  remote=${remote/git@github.com:/https://github.com/}
+  remote=${remote/.git/}
+  xdg-open "$remote/pulls"
+}
 
-
+# yessir
+issues() {
+  local remote
+  remote=$(git config --get remote.origin.url)
+  remote=${remote/git@github.com:/https://github.com/}
+  remote=${remote/.git/}
+  xdg-open "$remote/issues"
+}
 # git checkout on roids
 gck() {
   local branch
