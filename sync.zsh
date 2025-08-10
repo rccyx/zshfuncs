@@ -299,3 +299,176 @@ RESTORE
   chmod +x "$file"
   _ok "restore script written → $file"
 }
+
+# ===== GNOME 101 replica (safe + revertable) =====
+# repo: /home/ashgw/personal/projects/gnome
+# deps: dconf, gnome-extensions, rsync
+syncgnome() {
+  setopt local_options err_return no_unset pipe_fail
+  local mode="${1:-save}"
+  local REPO="$HOME/personal/projects/gnome"
+  local EXT_SRC="$HOME/.local/share/gnome-shell/extensions"
+  local EXT_DST_LOCAL="$HOME/.local/share/gnome-shell/extensions"
+  local EXT_REPO="$REPO/gnome-shell/extensions"
+  local FULL_CONF="$REPO/gnome-full.dconf"
+  local ENABLED_FILE="$REPO/gnome-enabled.txt"
+  local BACKUPS_DIR="$REPO/_backups"
+  local TS="$(date -Iseconds | tr ':' '_')"
+
+  _ok(){ print -P "%F{2}✅ $1%f"; }
+  _note(){ print -P "%F{4}ℹ️  $1%f"; }
+  _err(){ print -P "%F{1}❌ $1%f"; }
+
+  command -v dconf >/dev/null || { _err "dconf not found"; return 1; }
+
+  mkdir -p "$REPO" "$EXT_REPO" "$BACKUPS_DIR"
+
+  if [[ "$mode" == "save" ]]; then
+    _note "Saving full GNOME dconf tree…"
+    dconf dump / > "$FULL_CONF"
+    _ok "Saved → $FULL_CONF"
+
+    if command -v gnome-extensions >/dev/null; then
+      gnome-extensions list --enabled > "$ENABLED_FILE" || true
+      _ok "Enabled extensions → $ENABLED_FILE"
+    else
+      _note "gnome-extensions CLI missing; skipping enabled list"
+    fi
+
+    if [[ -d "$EXT_SRC" ]]; then
+      _note "Copying user extensions → repo…"
+      rsync -a --delete "$EXT_SRC"/ "$EXT_REPO"/
+      _ok "Extensions copied to $EXT_REPO"
+    else
+      _note "No user extension dir at $EXT_SRC"
+    fi
+
+    # write/refresh a self-contained restore script
+    cat > "$REPO/restore.sh" <<'RESTORE'
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="$HOME/personal/projects/gnome"
+EXT_REPO="$REPO/gnome-shell/extensions"
+EXT_DST="$HOME/.local/share/gnome-shell/extensions"
+FULL_CONF="$REPO/gnome-full.dconf"
+BACKUPS_DIR="$REPO/_backups"
+TS="$(date -Iseconds | tr ':' '_')"
+
+mkdir -p "$EXT_DST" "$BACKUPS_DIR"
+
+echo "==> Backing up current GNOME settings to ${BACKUPS_DIR}/pre-restore-${TS}.dconf"
+dconf dump / > "${BACKUPS_DIR}/pre-restore-${TS}.dconf" || true
+
+cleanup() {
+  echo
+  echo "!! Interrupted. Your current settings are backed up at:"
+  echo "   ${BACKUPS_DIR}/pre-restore-${TS}.dconf"
+  echo "You can revert later with:"
+  echo "   dconf load / < ${BACKUPS_DIR}/pre-restore-${TS}.dconf"
+}
+trap cleanup INT
+
+if [[ -d "$EXT_REPO" ]]; then
+  echo "==> Syncing user extensions…"
+  rsync -a --delete "$EXT_REPO"/ "$EXT_DST"/
+else
+  echo "-- no extensions dir in repo; skipping copy"
+fi
+
+if command -v gnome-extensions >/dev/null 2>&1 && [[ -f "$REPO/gnome-enabled.txt" ]]; then
+  echo "==> Enabling listed extensions (best effort)…"
+  while IFS= read -r uuid; do
+    [[ -z "$uuid" ]] && continue
+    if gnome-extensions info "$uuid" >/dev/null 2>&1; then
+      gnome-extensions enable "$uuid" >/dev/null 2>&1 || true
+    else
+      echo "-- missing extension folder for: $uuid (install it later)"
+    fi
+  done < "$REPO/gnome-enabled.txt"
+else
+  echo "-- skip enabling (no CLI or no list)"
+fi
+
+if [[ -f "$FULL_CONF" ]]; then
+  echo "==> Applying full GNOME settings…"
+  dconf load / < "$FULL_CONF" || true
+else
+  echo "-- no gnome-full.dconf in repo; nothing to load"
+fi
+
+echo "==> Done."
+echo "Tip: On Xorg you can reload shell with Alt+F2, type 'r', Enter. On Wayland, log out/in."
+RESTORE
+    chmod +x "$REPO/restore.sh"
+
+    _ok "Wrote restore script → $REPO/restore.sh"
+    _note "Commit/push your repo if you want a cloud backup."
+    return 0
+  fi
+
+  if [[ "$mode" == "load" ]]; then
+    # pre-restore backup of current box
+    local BK="$BACKUPS_DIR/pre-load-${TS}.dconf"
+    _note "Backing up CURRENT box to $BK"
+    dconf dump / > "$BK" || true
+
+    # copy extensions
+    if [[ -d "$EXT_REPO" ]]; then
+      _note "Syncing user extensions from repo → local…"
+      rsync -a --delete "$EXT_REPO"/ "$EXT_DST_LOCAL"/
+      _ok "Extensions synced"
+    else
+      _note "No $EXT_REPO; skipping extension copy"
+    fi
+
+    # enable listed extensions
+    if command -v gnome-extensions >/dev/null && [[ -f "$ENABLED_FILE" ]]; then
+      _note "Enabling listed extensions…"
+      while IFS= read -r uuid; do
+        [[ -z "$uuid" ]] && continue
+        if gnome-extensions info "$uuid" >/dev/null 2>&1; then
+          gnome-extensions enable "$uuid" >/dev/null 2>&1 || true
+        else
+          _note "missing extension folder for $uuid"
+        fi
+      done < "$ENABLED_FILE"
+      _ok "Extension enabling pass complete"
+    else
+      _note "No gnome-enabled.txt or CLI; skipping enable"
+    fi
+
+    # apply settings
+    if [[ -f "$FULL_CONF" ]]; then
+      _note "Applying full GNOME settings from repo…"
+      dconf load / < "$FULL_CONF" || _note "some keys may be ignored if this GNOME version differs"
+      _ok "Settings applied"
+    else
+      _note "No $FULL_CONF to load"
+    fi
+
+    _note "If things look odd: dconf load / < $BK  (to revert)"
+    [[ "$XDG_SESSION_TYPE" == "x11" ]] && _note "Reload shell: Alt+F2 → r → Enter"
+    return 0
+  fi
+
+  _err "Usage: syncgnome [save|load]"
+
+
+  # --- commit & push (gnome) ---
+  local repo="$HOME/personal/projects/gnome"
+  cd "$repo" || { _err "gnome repo not found: $repo"; return 1; }
+
+  git add -A
+
+  if git diff --cached --quiet; then
+    _note "no changes to commit (gnome repo up to date)"
+  else
+     git commit -m "syncgnome: pkgs+exts+settings $(date -Iseconds)" || {
+     _err "commit failed"; return 1;
+    }
+    git push && _ok "GNOME config synced"
+  fi
+
+  cd - >/dev/null || :
+}
