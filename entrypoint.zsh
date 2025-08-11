@@ -1,0 +1,11 @@
+source ./bluetooth.zsh
+source ./fetch.zsh
+source ./fingerprint.zsh
+source ./funcs.zsh
+source ./git.zsh
+source ./ssh.zsh
+source ./sync.zsh
+source ./usb.zsh
+source ./utils.zsh
+source ./wallpapers.zsh
+source ./wifi.zsh
