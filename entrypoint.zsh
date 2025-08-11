@@ -9,3 +9,4 @@ source ./usb.zsh
 source ./utils.zsh
 source ./wallpapers.zsh
 source ./wifi.zsh
+source ./kitty.zsh
