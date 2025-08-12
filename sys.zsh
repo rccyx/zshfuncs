@@ -60,6 +60,26 @@ diskspace() {
   echo -e "\033[32m$sentence\033[0m"
 }
 
+# =========================
+# psf  → find processes and kill selected
+# psf             pick and SIGTERM
+# psf -9          pick and SIGKILL
+# =========================
+psf() {
+  local sig="15"
+  [[ "$1" =~ ^-?[0-9]+$ ]] && sig="${1#-}"
+  if _has fzf; then
+    local lines pids
+    lines=$(ps -eo pid,user,pcpu,pmem,etime,comm --sort=-pcpu | awk 'NR==1 || $3>0.1' | fzf --multi --height 70% --border --prompt="kill [sig $sig] ⇢ " --preview="echo {}")
+    [[ -z "$lines" ]] && return 1
+    pids=$(echo "$lines" | awk 'NR>1{print $1}')
+    echo "$pids" | xargs -r kill -"$sig"
+  else
+    ps aux | head
+    echo "fzf not installed. Use kill manually or install fzf."
+  fi
+}
+
 
 
 alias sysinfo="agfetch"
