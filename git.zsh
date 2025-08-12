@@ -39,4 +39,10 @@ ggrep() {
   git log --all --pretty=format:'%C(auto)%h %s %Cgreen(%cr)' -S"$q" |
     fzf --reverse --preview="echo {} | cut -d' ' -f1 | xargs git show --color=always"
 }
+
+# generate new SSH keys for github, run this u'll get the pub key copied to ur clipboard,just paste it
+ghkey() {
+    bash ~/.ssh/_gh_gen.sh
+}
+
 compdef _git ggrep
