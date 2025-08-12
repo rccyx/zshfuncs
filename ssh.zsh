@@ -95,6 +95,11 @@ sshclean() {
   sed -i "${lineno}d" "$kh" && _ok "line $lineno removed from known_hosts"
 }
 
+# Show SSH public keys quick
+mykeys() {
+  cat ~/.ssh/*.pub
+}
+
 # ===============================================================
 # autocompletion: sshsave <keyname>
 # ===============================================================
@@ -104,12 +109,3 @@ _ssh_keys(){
   _describe 'ssh keys' keys
 }
 compdef _ssh_keys sshsave
-
-# ===============================================================
-# aliases for even less typing
-# ===============================================================
-alias sshg='sshgen'
-alias sshs='sshsave'
-alias sshl='sshlist'
-alias sshc='sshconf'
-alias sshx='sshclean'
