@@ -1,16 +1,33 @@
-# === Source all zshfuncs ===
-# Always source utils.zsh first, then the rest in any order.
+# === zshfuncs entrypoint ===
 
-# Absolute path to current script's directory
-__zf_dir="${0:A:h}"
+# 1) guard: never run twice in the same shell
+if [[ -n ${__ZSF_ENTRYPOINT_SOURCED-} ]]; then
+  return
+fi
+typeset -g __ZSF_ENTRYPOINT_SOURCED=1
 
-# First: source utils.zsh if it exists
-[[ -f "$__zf_dir/utils.zsh" ]] && source "$__zf_dir/utils.zsh"
+# 2) resolve path to this file and its dir (works when sourced)
+__zf_script="${(%):-%N}"
+__zf_dir="${__zf_script:A:h}"
+__self_base="${__zf_script:A:t}"
 
-# Then: source all other .zsh files except utils.zsh
+# 3) utils first
+if [[ -r "$__zf_dir/utils.zsh" ]]; then
+  source "$__zf_dir/utils.zsh"
+fi
+
+# 4) then every other .zsh in the folder, excluding self and utils
 for f in "$__zf_dir"/*.zsh; do
-  [[ "$f" == "$__zf_dir/utils.zsh" ]] && continue
-  [[ -f "$f" ]] && source "$f"
+  [[ ! -r "$f" ]] && continue
+  [[ "${f:t}" == "utils.zsh" ]] && continue
+  [[ "${f:t}" == "$__self_base" ]] && continue
+  source "$f"
 done
 
-unset __zf_dir f
+# 5) optional: make sure completion is initialized once, not per file
+if ! whence -w compdef >/dev/null 2>&1; then
+  autoload -Uz compinit
+  compinit -d "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump"
+fi
+
+unset __zf_script __zf_dir __self_base
