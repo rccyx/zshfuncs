@@ -40,9 +40,22 @@ ggrep() {
     fzf --reverse --preview="echo {} | cut -d' ' -f1 | xargs git show --color=always"
 }
 
+## g for git, double l is for last, since I already have gl as git log.. in the .gitconfig file.
+gll() {
+	 git show $(git log -1 --format=%H)
+}
+
+gllc(){
+	git diff HEAD~1 HEAD --stat
+}
+
+
 # generate new SSH keys for github, run this u'll get the pub key copied to ur clipboard,just paste it
 ghkey() {
     bash ~/.ssh/_gh_gen.sh
 }
+
+
+
 
 compdef _git ggrep
