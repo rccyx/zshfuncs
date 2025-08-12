@@ -55,7 +55,9 @@ ghkey() {
     bash ~/.ssh/_gh_gen.sh
 }
 
-
-
+# USE WITH CAUTION: DELETES ALL THE GIT BRANCHES EXCEPT FOR THE ONE YOU'RE ON RN
+dlb() {
+ git branch | grep -v "$(git rev-parse --abbrev-ref HEAD)" | xargs git branch -D
+}
 
 compdef _git ggrep
