@@ -101,4 +101,20 @@ _wifi_ssids(){
   local -a ssids; ssids=( $(nmcli -t -f SSID dev wifi | sort -u) )
   _describe 'ssid' ssids
 }
-compdef _wifi_ssids wifireconnect 
+
+connected-devices(){
+  GATEWAY_IP=$(ip route | grep default | awk '{print $3}')
+  echo "Scanning for connected devices on your network..."
+  sudo arp-scan --localnet | grep -v "Interface:" | grep -v "Starting arp-scan" | grep -v "Ending arp-scan"
+  CONNECTED_DEVICES=$(sudo arp-scan --localnet | grep -c "^\([0-9]\{1,3\}\.\)\{3\}[0-9]\{1,3\}")
+  echo "Total number of connected devices: $CONNECTED_DEVICES"
+  GATEWAY_IP=$(ip route | grep default | awk '{print $3}')
+  echo "Scanning for connected devices on your network..."
+  sudo arp-scan --localnet | grep -v "Interface:" | grep -v "Starting arp-scan" | grep -v "Ending arp-scan"
+  CONNECTED_DEVICES=$(sudo arp-scan --localnet | grep -c "^\([0-9]\{1,3\}\.\)\{3\}[0-9]\{1,3\}")
+  echo "Total number of connected devices: $CONNECTED_DEVICES"
+}
+
+
+
+compdef _wifi_ssids wifireconnect
