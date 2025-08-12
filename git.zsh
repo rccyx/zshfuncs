@@ -49,6 +49,11 @@ gllc(){
 	git diff HEAD~1 HEAD --stat
 }
 
+#   show top repo contributors fast
+gitwho() {
+  git -C "${1:-.}" shortlog -sn --no-merges | head | nl -ba
+}
+
 
 # generate new SSH keys for github, run this u'll get the pub key copied to ur clipboard,just paste it
 ghkey() {
