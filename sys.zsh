@@ -50,4 +50,16 @@ ashgw() {
     <(printf "%s\n" "$logo" | awk -v pad="$COL" -v pre="$m" -v suf="$r" '{printf "%s%-"pad"s%s\n",pre,$0,suf}') \
     <(printf "%s\n" "$info")
 }
+
+diskspace() {
+  local df_output=$(df -h $HOME | tail -n 1)
+  local total=$(echo $df_output | awk '{print $2}')
+  local used=$(echo $df_output | awk '{print $3}')
+  local avail=$(echo $df_output | awk '{print $4}')
+  local sentence="Your total disk space is $total, with $used used and $avail available."
+  echo -e "\033[32m$sentence\033[0m"
+}
+
+
+
 alias sysinfo="agfetch"
