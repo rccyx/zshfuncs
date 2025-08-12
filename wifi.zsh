@@ -116,5 +116,65 @@ connected-devices(){
 }
 
 
+netspeed() {
+  if ! command -v speedtest &>/dev/null; then
+    echo -e "\e[1;31mspeedtest-cli not found. Install it with:\e[0m pip install speedtest-cli"
+    return 1
+  fi
+
+  echo -e "\e[1;34m⏳ Testing internet speed...\e[0m"
+  local output=$(speedtest --secure --simple 2>/dev/null)
+
+  if [[ $? -ne 0 ]]; then
+    echo -e "\e[1;31m❌ Failed to test speed. Check connection.\e[0m"
+    return 1
+  fi
+
+  local ping=$(echo "$output" | grep "Ping" | awk '{print $2 " " $3}')
+  local download=$(echo "$output" | grep "Download" | awk '{print $2 " " $3}')
+  local upload=$(echo "$output" | grep "Upload" | awk '{print $2 " " $3}')
+
+  echo -e "\e[1;36m📡 Ping:\e[0m     $ping"
+  echo -e "\e[1;36m⬇️  Download:\e[0m $download"
+  echo -e "\e[1;36m⬆️  Upload:\e[0m   $upload"
+
+  # Copy to clipboard if available
+  if command -v xclip >/dev/null; then
+    printf "Ping: %s\nDownload: %s\nUpload: %s\n" "$ping" "$download" "$upload" | xclip -selection clipboard
+    echo -e "\e[1;32m📋 Copied to clipboard.\e[0m"
+  fi
+}
+
+
+# autogenerate QR for current Wi-Fi network
+wifiqr() {
+  if ! command -v qrencode &>/dev/null; then
+    echo -e "\e[1;31mqrencode not installed. Install with: sudo apt install qrencode\e[0m"
+    return 1
+  fi
+
+  local ssid password
+
+  ssid=$(nmcli -t -f active,ssid dev wifi | grep '^yes' | cut -d: -f2)
+  if [[ -z "$ssid" ]]; then
+    echo -e "\e[1;31mNot connected to any Wi-Fi.\e[0m"
+    return 1
+  fi
+
+  password=$(sudo grep -r '^psk=' /etc/NetworkManager/system-connections/ 2>/dev/null \
+              | grep "$ssid" | head -n1 | cut -d= -f2)
+
+  if [[ -z "$password" ]]; then
+    auth="nopass"
+  else
+    auth="WPA"
+  fi
+
+  local payload="WIFI:T:$auth;S:$ssid;P:$password;;"
+
+  echo -e "\e[1;36m📶 Current SSID: \e[0m$ssid"
+  echo -e "\e[1;34m🔳 Scan to connect:\e[0m"
+  echo "$payload" | qrencode -t ANSIUTF8
+}
 
 compdef _wifi_ssids wifireconnect
