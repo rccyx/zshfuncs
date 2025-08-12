@@ -94,4 +94,11 @@ compdef _usbdev usbmount usbumount usbformat usbwipe usbperf usbburn usbls
 _usbdev(){
   local -a devs; devs=(${(f)"$(lsblk -nr -o NAME,TRAN | awk '$2==\"usb\"{print \"/dev/\"$1}')"})
   _describe 'usb' devs
-} 
+}
+
+# ===============  COMPLETIONS  ==================
+compdef _usbdev usbmount usbumount usbformat usbwipe usbperf usbburn usbls
+_usbdev(){
+  local -a devs; devs=(${(f)"$(lsblk -nr -o NAME,TRAN | awk '$2=="usb"{print "/dev/"$1}')"})
+  _describe 'usb' devs
+}
