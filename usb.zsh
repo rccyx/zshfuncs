@@ -252,7 +252,63 @@ _usbdev(){
   _describe 'usb' devs
 }
 
-usb() {
+
+# Peek into USB contents with preview and optional open/copy
+usb_peek() {
+  emulate -L zsh
+  setopt err_return pipefail
+  local R=$'\033[31m' C=$'\033[36m' G=$'\033[32m' N=$'\033[0m'
+  local part mnt
+
+  # needs _usb__pick_part and _usb__ensure_mounted from earlier
+  part=$(_usb__pick_part) || { print -ru2 -- "${R}no USB partition chosen${N}"; return 1; }
+  mnt=$(_usb__ensure_mounted "$part") || return 1
+
+  print -r -- "${C}mounted at ${mnt}${N}"
+
+  if command -v fzf >/dev/null; then
+    (
+      cd "$mnt" || exit 1
+      # list files and dirs up to depth 5
+      if command -v fd >/dev/null; then
+        FD_HIDE='.git,node_modules,venv,.venv,__pycache__,*.o,*.so,*.bin,*.lock'
+        fd -HI -t f -t d -d 5 --exclude "{$FD_HIDE}" . | sed 's#^\./##'
+      else
+        find . -mindepth 1 -maxdepth 5 \( -name .git -o -name node_modules -o -name venv -o -name .venv -o -name __pycache__ \) -prune -o -print | sed 's#^\./##'
+      fi
+    ) | FZF_DEFAULT_OPTS="--height=80% --border --reverse" fzf \
+          --prompt="peek USB ⇢ " \
+          --preview '
+            p="{}"
+            if [ -d "$p" ]; then
+              if command -v tree >/dev/null; then tree -aC -L 2 "$p"; else find "$p" -maxdepth 1 -print; fi
+            else
+              if command -v bat >/dev/null; then bat --style=plain --paging=never --color=always "$p"; else file -b "$p"; head -n 200 "$p"; fi
+            fi
+          ' \
+          --bind 'ctrl-y:execute-silent(echo -n "'"$mnt"'/{}" | xclip -selection clipboard || true)+abort' \
+          --bind 'ctrl-o:execute(bash -lc '"'"'
+              p="{}"
+              if [ -d "$p" ]; then
+                ${EDITOR:-nvim} "$p"
+              else
+                ${PAGER:-less} "$p"
+              fi
+            '"'"')' \
+          --header $"enter to preview, ctrl-o to open, ctrl-y to copy path"
+  else
+    print -r -- "${C}fzf not installed. Showing a quick tree.${N}"
+    if command -v tree >/dev/null; then
+      tree -aC -L 2 "$mnt"
+    else
+      ls -la "$mnt"
+    fi
+  fi
+
+  print -r -- "${G}done.${N}"
+}
+
+usb(){
   emulate -L zsh
   setopt err_return pipefail
   local N=$'\033[0m' Y=$'\033[33m' C=$'\033[36m' R=$'\033[31m'
@@ -271,6 +327,7 @@ usb() {
     usbperf     "Write speed test"
     usb_copy    "USB → directory clone"
     usb_put     "Copy local folder → USB"
+    usb_peek    "Peek into the USB"
   )
 
   local -a names available lines
