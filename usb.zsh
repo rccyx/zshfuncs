@@ -252,6 +252,67 @@ _usbdev(){
   _describe 'usb' devs
 }
 
+usb() {
+  emulate -L zsh
+  setopt err_return pipefail
+  local N=$'\033[0m' Y=$'\033[33m' C=$'\033[36m' R=$'\033[31m'
+  local TAB=$'\t'
+
+  local -A desc; desc=(
+    flash       "ISO to USB flasher with verify"
+    usbinfo     "List USB devices"
+    usbls       "Show partitions and mountpoints"
+    usbmount    "Mount a USB partition"
+    usbumount   "Unmount and power off"
+    usbformat   "Format device fat32/exfat/ntfs/ext4"
+    usbwipe     "Wipe device with zeros"
+    usbburn     "Quick write ISO to device"
+    usbclone    "Device image create or write"
+    usbperf     "Write speed test"
+    usb_copy    "USB → directory clone"
+    usb_put     "Copy local folder → USB"
+  )
+
+  local -a names available lines
+  names=(flash usbinfo usbls usbmount usbumount usbformat usbwipe usbburn usbclone usbperf usb_copy usb_put)
+  for f in $names; do
+    (( $+functions[$f] )) && available+="$f"
+  done
+  (( ${#available} )) || { print -ru2 -- "${R}No USB funcs found in this shell${N}"; return 1; }
+
+  if command -v fzf >/dev/null; then
+    lines=()
+    for f in $available; do
+      lines+=("${f}${TAB}${desc[$f]:-$f}")
+    done
+    local pick fn
+    pick=$(printf "%s\n" "${lines[@]}" \
+      | fzf --delimiter=$'\t' --with-nth=2.. --prompt="USB menu ⇢ " --height 60% --border --reverse) || return 1
+    fn=${pick%%$TAB*}
+    print -r -- "${C}→ $fn${N}"
+    if (( $+functions[$fn] )); then
+      "$fn"
+    else
+      print -ru2 -- "${R}$fn not defined${N}"
+      return 127
+    fi
+  else
+    print -r -- "${Y}fzf not found. Using numbered menu.${N}"
+    local i=1 choice
+    for f in $available; do print -r -- "[$i] $f - ${desc[$f]:-$f}"; ((i++)); done
+    print -n -- "${C}Pick number ⇢ ${N}"
+    read -r choice
+    if [[ "$choice" =~ '^[0-9]+$' ]] && (( choice>=1 && choice<=${#available} )); then
+      local fn=${available[$choice]}
+      print -r -- "${C}→ $fn${N}"
+      "$fn"
+    else
+      print -ru2 -- "${R}invalid selection${N}"
+      return 1
+    fi
+  fi
+}
+
 # ===============  COMPLETIONS  ==================
 compdef _usbdev usbmount usbumount usbformat usbwipe usbperf usbburn usbls
 _usbdev(){
