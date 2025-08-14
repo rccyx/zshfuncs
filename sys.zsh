@@ -60,6 +60,10 @@ diskspace() {
   echo -e "\033[32m$sentence\033[0m"
 }
 
+storage(){
+  sudo ncdu / --exclude /proc --exclude /sys
+}
+
 # =========================
 # psf  → find processes and kill selected
 # psf             pick and SIGTERM
@@ -83,3 +87,4 @@ psf() {
 
 
 alias sysinfo="agfetch"
+
