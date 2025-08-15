@@ -1,3 +1,5 @@
+setup_screenshots(){
+
 mkdir -p ~/Pictures/Screenshots
 
 # mac-style capture: save to file, copy to clipboard, then open in swappy
@@ -67,4 +69,5 @@ else
 fi
 EOF
 chmod +x ~/.local/bin/shot-mac
+}
 
