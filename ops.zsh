@@ -1,26 +1,133 @@
-# create a new directory & cd into it
-mdd () {
- mkdir -p "$@" && cd "$@"
+# small helpers
+_have(){ command -v "$1" >/dev/null 2>&1; }
+_err(){ print -P "%F{1}❌ $1%f" >&2; }
+_ok(){  print -P "%F{2}✅ $1%f"; }
+
+# Detect session backend: wayland | x11 | none
+_session(){
+  if [[ -n ${WAYLAND_DISPLAY:-} || ${XDG_SESSION_TYPE:-} == wayland ]]; then
+    printf "wayland"
+  elif [[ -n ${DISPLAY:-} ]]; then
+    printf "x11"
+  else
+    printf "none"
+  fi
 }
 
-# ================================================================
-#   cpd — copy all readable text files from a directory to clipboard
-#
-#   - skips binaries and common junk (node_modules, .git, .venv, etc.)
-#   - strips ANSI codes
-#   - warns if dir >10MB
-#   - supports fzf dir picker
-#   - deps: fzf, xclip, file, (fd optional)
-# ================================================================
-cpd() {
-  local dir total_bytes max_mb=10 warn=$'\u26A0'
-  local interactive=0
-  local arg
+# OSC52 copy to terminal, works locally and over SSH, supports tmux
+_osc52_copy(){
+  local data b64 esc="\x1b" bel="\x07"
+  # read stdin fully
+  data="$(cat)"
+  # 1 MB guard to avoid freezing terminals
+  if (( ${#data} > 1048576 )); then
+    _err "OSC52 payload too large (>1 MB)"; return 1
+  fi
+  b64="$(printf "%s" "$data" | base64 | tr -d '\r\n')"
+  if [[ -n ${TMUX:-} ]]; then
+    # wrap for tmux passthrough
+    printf "${esc}Ptmux;${esc}]52;c;%s${bel}${esc}\\" "$b64"
+  else
+    printf "${esc}]52;c;%s${bel}" "$b64"
+  fi
+}
 
-  # defaults
+# Unified clipboard writers and readers
+# You can force a backend with: export CLIP_BACKEND=wl | x | xsel | osc52
+_clip(){
+  local be="${CLIP_BACKEND:-}"
+  [[ -z $be ]] && be="$(_session)"
+  case "$be" in
+    wl|wayland)
+      if _have wl-copy; then wl-copy "$@"; return; fi
+      # fall through if missing
+      ;;
+    x|x11)
+      if _have xclip; then xclip -selection clipboard "$@"; return; fi
+      if _have xsel;  then xsel --clipboard "$@"; return; fi
+      ;;
+    xsel)
+      if _have xsel;  then xsel --clipboard "$@"; return; fi
+      ;;
+    osc52)
+      _osc52_copy; return
+      ;;
+  esac
+
+  # Auto choose if no forced backend or missing tool
+  case "$(_session)" in
+    wayland)
+      if _have wl-copy; then wl-copy "$@"; return; fi
+      if _have xclip;   then xclip -selection clipboard "$@"; return; fi
+      if _have xsel;    then xsel --clipboard "$@"; return; fi
+      ;;
+    x11)
+      if _have xclip;   then xclip -selection clipboard "$@"; return; fi
+      if _have xsel;    then xsel --clipboard "$@"; return; fi
+      ;;
+    none)
+      _osc52_copy; return
+      ;;
+  esac
+
+  # last resort
+  _osc52_copy
+}
+
+_paste(){
+  local be="${CLIP_BACKEND:-}"
+  [[ -z $be ]] && be="$(_session)"
+  case "$be" in
+    wl|wayland)
+      if _have wl-paste; then wl-paste "$@"; return; fi
+      ;;
+    x|x11)
+      if _have xclip; then xclip -selection clipboard -o "$@"; return; fi
+      if _have xsel;  then xsel --clipboard -o "$@"; return; fi
+      ;;
+    xsel)
+      if _have xsel;  then xsel --clipboard -o "$@"; return; fi
+      ;;
+    osc52)
+      _err "paste via OSC52 is not possible"; return 1
+      ;;
+  esac
+
+  case "$(_session)" in
+    wayland)
+      if _have wl-paste; then wl-paste "$@"; return; fi
+      if _have xclip;    then xclip -selection clipboard -o "$@"; return; fi
+      if _have xsel;     then xsel --clipboard -o "$@"; return; fi
+      ;;
+    x11)
+      if _have xclip;    then xclip -selection clipboard -o "$@"; return; fi
+      if _have xsel;     then xsel --clipboard -o "$@"; return; fi
+      ;;
+    none)
+      _err "no GUI clipboard in this session"; return 1
+      ;;
+  esac
+
+  _err "no clipboard tool found. install wl-clipboard or xclip"
+  return 1
+}
+
+# quick aliases
+copy(){ _clip -i; }     # usage: echo hi | copy
+paste(){ _paste; }      # prints clipboard to stdout
+
+# --------------------
+# Your utilities
+# --------------------
+
+# create a new directory and cd into it
+mdd () { mkdir -p "$@" && cd "$@"; }
+
+# copy all readable text files from a directory to clipboard
+cpd() {
+  local dir total_bytes max_mb=10 warn=$'\u26A0' interactive=0 arg
   local -a ignore_dirs=("*/.git/*" "*/node_modules/*" "*/.venv/*" "*/__pycache__/*" "*/dist/*" "*/build/*" "*/.next/*" "*/out/*" "*/.turbo/*" "*/.vercel/*" "*/target/*" "*/vendor/*")
 
-  # ---- parse flags ----
   for arg in "$@"; do
     case "$arg" in
       -i|--ignore) interactive=1 ;;
@@ -28,71 +135,54 @@ cpd() {
     esac
   done
 
-  # ---- choose directory ----
   if [[ -z $dir ]]; then
-    if command -v fzf >/dev/null; then
-      if command -v fd >/dev/null; then
+    if _have fzf; then
+      if _have fd; then
         dir=$(fd -t d --hidden --exclude .git . | fzf --prompt='📂 pick dir ⇢ ' --height 60% --border --reverse)
       else
         dir=$(find . -type d -not -path '*/.git/*' | fzf --prompt='📂 pick dir ⇢ ' --height 60% --border --reverse)
       fi
     else
-      echo "pass a directory or install fzf" >&2
-      return 1
+      _err "pass a directory or install fzf"; return 1
     fi
   fi
 
   [[ -z $dir ]]   && { _err "cancelled"; return 1; }
   [[ ! -d $dir ]] && { _err "'$dir' is not a directory"; return 1; }
 
-  # ---- optional interactive ignore loop ----
   if (( interactive )); then
-    local picks
+    local picks p base more=1
     local -a candidates
-    local more=1
-
     while (( more )); do
-      # fresh candidate list every round
       candidates=(".git" "node_modules" ".venv" "__pycache__" "dist" "build" ".next" "out" ".turbo" ".vercel" "target" "vendor")
-      while IFS= read -r d; do
-        candidates+=("${d#./}")
-      done < <(cd "$dir" && find . -maxdepth 2 -type d \( -name .git -prune -o -print \) | sed '1d' | sed 's#^\./##')
+      while IFS= read -r d; do candidates+=("${d#./}"); done < <(cd "$dir" && find . -maxdepth 2 -type d \( -name .git -prune -o -print \) | sed '1d;s#^\./##')
       candidates=("${(@u)candidates}")
-
       picks=$(printf '%s\n' "${candidates[@]}" | fzf --multi --height 60% --border --reverse \
               --prompt='🙈 ignore which dirs ⇢ ' \
               --preview='[[ -d "'"$dir"'"/{} ]] && ls -a "'"$dir"'"/{} | head -n 200')
-
       if [[ -n $picks ]]; then
-        local p base
         while IFS= read -r p; do
           [[ -z "$p" ]] && continue
           base="${p##*/}"
           ignore_dirs+=("*/${base}/*")
         done <<< "$picks"
       fi
-
-      echo -n "➕ Add more ignores? [y/N] "
-      read -r ans
-      [[ "$ans" =~ ^[Yy]$ ]] || more=0
+      echo -n "➕ Add more ignores? [y/N] "; read -r ans; [[ "$ans" =~ ^[Yy]$ ]] || more=0
     done
   fi
 
-  # ---- size check ----
   total_bytes=$(du -sb "$dir" | awk '{print $1}')
   if (( total_bytes > max_mb*1024*1024 )); then
-    read -q "REPLY?$warn  $((total_bytes/1024/1024)) MB > $max_mb MB, copy anyway? [y/N] "
-    echo
+    read -q "REPLY?$warn  $((total_bytes/1024/1024)) MB > $max_mb MB, copy anyway? [y/N] "; echo
     [[ $REPLY =~ ^[Yy]$ ]] || { _err "aborted"; return 1; }
   fi
 
-  # ---- dump and copy ----
   {
     cd "$dir" || { _err "cd failed"; return 1; }
-    find . -type f \
-      $(for i in "${ignore_dirs[@]}"; do printf "! -path %q " "$i"; done) \
-      -print0 | sort -z | while IFS= read -r -d '' f; do
-        if command -v file >/dev/null && ! file --mime "$f" | grep -q text; then
+    find . -type f $(for i in "${ignore_dirs[@]}"; do printf "! -path %q " "$i"; done) -print0 \
+    | sort -z \
+    | while IFS= read -r -d '' f; do
+        if _have file && ! file --mime "$f" | grep -q text; then
           echo "# $f [binary skipped]"
         else
           echo "# $f"
@@ -100,104 +190,65 @@ cpd() {
           echo
         fi
       done
-  } | xclip -selection clipboard
+  } | _clip -i || return 1
 
   _ok "directory '$dir' copied to clipboard (size: $(du -sh "$dir" | awk '{print $1}'))"
 }
 
-# Copies all files in current directory to clipboard as a tar archive, paste them later
+# Copy or paste current directory as a tar stream
 clipdir() {
-  if [ "$1" = "copy" ]; then
-    tar -cf - * 2>/dev/null | xclip -selection clipboard -i
-    echo -e "\e[1;32mDirectory contents copied to clipboard.\e[0m"
-  elif [ "$1" = "paste" ]; then
-    xclip -selection clipboard -o | tar -xvf - 2>/dev/null
-    echo -e "\e[1;32mDirectory contents pasted to $(pwd).\e[0m"
-  else
-    echo -e "\e[1;31mUsage: clipdir {copy|paste}\e[0m"
-  fi
+  case "$1" in
+    copy)  tar -cf - * 2>/dev/null | _clip -i || return 1; _ok "directory copied";;
+    paste) _paste | tar -xvf - 2>/dev/null; _ok "directory pasted to $(pwd)";;
+    *)     _err "usage: clipdir {copy|paste}"; return 1;;
+  esac
 }
 
-
-# Delete files and directories in current directory starting with a given string or matching a regex
+# FZF picker to delete files and dirs
 rmw() {
-  command -v fzf >/dev/null || { echo "fzf missing"; return 1 }
+  _have fzf || { echo "fzf missing"; return 1; }
   local finder selection
-
-  # pick every file and dir under cwd, hide .git and other junk
-  if command -v fd >/dev/null; then
-    finder='fd --hidden --follow --exclude .git .'
-  else
-    finder='find . -mindepth 1 -not -path "*/\.git/*"'
-  fi
-
+  if _have fd; then finder='fd --hidden --follow --exclude .git .'
+  else finder='find . -mindepth 1 -not -path "*/\.git/*"'; fi
   selection=$(
-    eval "$finder" | \
-    fzf --multi --height 60% --reverse --border \
-        --prompt="🗑️  select items to delete ⇢ " \
-        --preview '
-          [[ -d {} ]] && { command -v tree >/dev/null && tree -C -L 2 {} || ls -a {} ; } ||
-          { command -v bat >/dev/null && bat --style=numbers --color=always --line-range :200 {} || cat {} ; }'
+    eval "$finder" | fzf --multi --height 60% --reverse --border \
+      --prompt="🗑️  select items to delete ⇢ " \
+      --preview '
+        [[ -d {} ]] && { command -v tree >/dev/null && tree -C -L 2 {} || ls -a {} ; } ||
+        { command -v bat >/dev/null && bat --style=numbers --color=always --line-range :200 {} || head -n 200 {} ; }'
   )
-
   [[ -z $selection ]] && echo "nothing chosen, aborting" && return 1
-
-  echo "about to delete:"
-  echo "$selection" | sed 's/^/   🔸 /'
-  read -q "REPLY?confirm? [y/N] "
-  echo
+  echo "about to delete:"; echo "$selection" | sed 's/^/   🔸 /'
+  read -q "REPLY?confirm? [y/N] "; echo
   [[ $REPLY =~ ^[Yy]$ ]] || { echo "aborted"; return 1 }
-
   echo "$selection" | xargs -r rm -rf
   echo "✅ deleted"
 }
 
-
-
-
-# copy file(s) contents to clipboard with elite UX
+# Copy picked files to clipboard
 cpf() {
-  local -a picks                                     # array for chosen files
-  local max_mb=10                                    # warn if total >10 MB
-
-  _err(){ print -P "%F{1}❌ $1%f" ; }
-  _ok(){ print -P "%F{2}✅ $1%f" ; }
-
-  # ---- gather file list ----
-  if (( $# )); then
-    picks=("$@")
+  local -a picks; local max_mb=10
+  if (( $# )); then picks=("$@")
   else
-    command -v fzf >/dev/null || { _err "fzf not found, pass a file path"; return 1 }
-    local finder; command -v fd >/dev/null && finder="fd -t f --hidden --exclude .git ." \
-                                            || finder="find . -type f -not -path '*/\.git/*'"
-    picks=("${(@f)$(eval "$finder" | \
-      fzf --multi --height 60% --border --reverse \
-          --prompt='📋 pick file ⇢ ' \
-          --preview 'command -v bat >/dev/null && bat --style=numbers --color=always --line-range :300 {} || head -n 300 {}')}")
+    _have fzf || { _err "fzf not found, pass a file path"; return 1 }
+    local finder; _have fd && finder="fd -t f --hidden --exclude .git ." || finder="find . -type f -not -path '*/\.git/*'"
+    picks=("${(@f)$(eval "$finder" | fzf --multi --height 60% --border --reverse \
+      --prompt='📋 pick file ⇢ ' \
+      --preview 'command -v bat >/dev/null && bat --style=numbers --color=always --line-range :300 {} || head -n 300 {}')}")
     [[ -z $picks ]] && _err "cancelled" && return 1
   fi
 
-  # ---- sanity checks ----
   for f in "${picks[@]}"; do [[ -f $f ]] || { _err "'$f' is not a regular file"; return 1; } done
-
   local total_bytes=$(du -cb "${picks[@]}" | tail -1 | awk '{print $1}')
   if (( total_bytes > max_mb*1024*1024 )); then
-    read -q "REPLY?⚠️ ${total_bytes} bytes > ${max_mb} MB, copy anyway? [y/N] "
-    echo
+    read -q "REPLY?⚠️ ${total_bytes} bytes > ${max_mb} MB, copy anyway? [y/N] "; echo
     [[ $REPLY =~ ^[Yy]$ ]] || { _err "aborted"; return 1; }
   fi
 
-  # ---- copy ----
-  cat "${picks[@]}" | xclip -selection clipboard
-  _ok "copied ${#picks[@]} file(s) → clipboard (${total_bytes} bytes)"
+  cat "${picks[@]}" | _clip -i || return 1
+  _ok "copied ${#picks[@]} file(s) to clipboard (${total_bytes} bytes)"
 }
 
-# optional completion
-_cpf(){ _arguments '*:files:_files' }
-compdef _cpf cpf
+# copy stdout of any command to clipboard
+ccmd(){ eval "$@" | _clip -i; }
 
-# Needs xclip
-# short for copy command, copies the output of the command to the clipboard
-ccmd() {
-  eval "$@" | xclip -selection clipboard
-}
