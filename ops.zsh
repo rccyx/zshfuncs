@@ -1,9 +1,12 @@
-# small helpers
+# ===========================
+#  Cross desktop clipboard utils for Wayland, GNOME, X11, tmux, SSH
+# ===========================
+
 _have(){ command -v "$1" >/dev/null 2>&1; }
 _err(){ print -P "%F{1}❌ $1%f" >&2; }
 _ok(){  print -P "%F{2}✅ $1%f"; }
 
-# Detect session backend: wayland | x11 | none
+# Detect session backend
 _session(){
   if [[ -n ${WAYLAND_DISPLAY:-} || ${XDG_SESSION_TYPE:-} == wayland ]]; then
     printf "wayland"
@@ -14,33 +17,25 @@ _session(){
   fi
 }
 
-# OSC52 copy to terminal, works locally and over SSH, supports tmux
+# OSC52 copy to terminal, works even over SSH and inside tmux
 _osc52_copy(){
   local data b64 esc="\x1b" bel="\x07"
-  # read stdin fully
   data="$(cat)"
-  # 1 MB guard to avoid freezing terminals
-  if (( ${#data} > 1048576 )); then
-    _err "OSC52 payload too large (>1 MB)"; return 1
-  fi
+  if (( ${#data} > 1048576 )); then _err "OSC52 payload too large (>1 MB)"; return 1; fi
   b64="$(printf "%s" "$data" | base64 | tr -d '\r\n')"
   if [[ -n ${TMUX:-} ]]; then
-    # wrap for tmux passthrough
     printf "${esc}Ptmux;${esc}]52;c;%s${bel}${esc}\\" "$b64"
   else
     printf "${esc}]52;c;%s${bel}" "$b64"
   fi
 }
 
-# Unified clipboard writers and readers
-# You can force a backend with: export CLIP_BACKEND=wl | x | xsel | osc52
+# Write to clipboard. Reads stdin. Optional: set CLIP_BACKEND=wl|x|xsel|osc52 to force.
 _clip(){
-  local be="${CLIP_BACKEND:-}"
-  [[ -z $be ]] && be="$(_session)"
+  local be="${CLIP_BACKEND:-$(_session)}"
   case "$be" in
     wl|wayland)
       if _have wl-copy; then wl-copy "$@"; return; fi
-      # fall through if missing
       ;;
     x|x11)
       if _have xclip; then xclip -selection clipboard "$@"; return; fi
@@ -54,7 +49,6 @@ _clip(){
       ;;
   esac
 
-  # Auto choose if no forced backend or missing tool
   case "$(_session)" in
     wayland)
       if _have wl-copy; then wl-copy "$@"; return; fi
@@ -70,13 +64,12 @@ _clip(){
       ;;
   esac
 
-  # last resort
   _osc52_copy
 }
 
+# Read from clipboard to stdout
 _paste(){
-  local be="${CLIP_BACKEND:-}"
-  [[ -z $be ]] && be="$(_session)"
+  local be="${CLIP_BACKEND:-$(_session)}"
   case "$be" in
     wl|wayland)
       if _have wl-paste; then wl-paste "$@"; return; fi
@@ -112,15 +105,15 @@ _paste(){
   return 1
 }
 
-# quick aliases
-copy(){ _clip -i; }     # usage: echo hi | copy
-paste(){ _paste; }      # prints clipboard to stdout
+# Handy frontends
+copy(){ _clip; }     # usage: echo hi | copy
+paste(){ _paste; }   # prints clipboard
 
 # --------------------
-# Your utilities
+# Your utilities (fixed to use _clip without -i)
 # --------------------
 
-# create a new directory and cd into it
+# create a new directory & cd into it
 mdd () { mkdir -p "$@" && cd "$@"; }
 
 # copy all readable text files from a directory to clipboard
@@ -190,7 +183,7 @@ cpd() {
           echo
         fi
       done
-  } | _clip -i || return 1
+  } | _clip || return 1
 
   _ok "directory '$dir' copied to clipboard (size: $(du -sh "$dir" | awk '{print $1}'))"
 }
@@ -198,13 +191,13 @@ cpd() {
 # Copy or paste current directory as a tar stream
 clipdir() {
   case "$1" in
-    copy)  tar -cf - * 2>/dev/null | _clip -i || return 1; _ok "directory copied";;
+    copy)  tar -cf - * 2>/dev/null | _clip || return 1; _ok "directory copied";;
     paste) _paste | tar -xvf - 2>/dev/null; _ok "directory pasted to $(pwd)";;
     *)     _err "usage: clipdir {copy|paste}"; return 1;;
   esac
 }
 
-# FZF picker to delete files and dirs
+# FZF delete picker
 rmw() {
   _have fzf || { echo "fzf missing"; return 1; }
   local finder selection
@@ -245,10 +238,10 @@ cpf() {
     [[ $REPLY =~ ^[Yy]$ ]] || { _err "aborted"; return 1; }
   fi
 
-  cat "${picks[@]}" | _clip -i || return 1
+  cat "${picks[@]}" | _clip || return 1
   _ok "copied ${#picks[@]} file(s) to clipboard (${total_bytes} bytes)"
 }
 
 # copy stdout of any command to clipboard
-ccmd(){ eval "$@" | _clip -i; }
+ccmd(){ eval "$@" | _clip; }
 
