@@ -5,7 +5,6 @@ mkdir -p ~/Pictures/Screenshots
 # mac-style capture: save to file, copy to clipboard, then open in swappy
 cat > ~/.local/bin/shot-mac <<'EOF'
 #!/bin/sh
-set -euo pipefail
 
 dir="$HOME/Pictures/Screenshots"
 mkdir -p "$dir"
