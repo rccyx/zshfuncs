@@ -1,8 +1,9 @@
 # =================== PACKAGE-ONLY SYNC ===================
-# Backs up: APT sources+keys, APT manual pkgs, dpkg selections,
+# Backs up: APT manual pkgs, dpkg selections,
 # snaps, flatpaks, pip/pipx, npm/pnpm, cargo, rustup, nix, brew,
 # and GNOME keybindings only if GNOME is running.
 # Writes: restore.sh inside $backup_dir
+# No APT sources, no keyrings.
 # ========================================================
 
 # --- msg helpers (safe defaults) ---
@@ -28,9 +29,6 @@ syncall() {
   mkdir -p "$backup_dir"
 
   _private_sync_apt         "$backup_dir"
-  _private_sync_apt_sources "$backup_dir"
-  _private_redact_sources   "$backup_dir"
-  _private_sync_apt_keys    "$backup_dir"
   _private_sync_dpkg_sel    "$backup_dir"
 
   _private_sync_snap        "$backup_dir"
@@ -61,8 +59,8 @@ syncall() {
   if git diff --cached --quiet; then
     _note "no changes to commit"
   else
-    git commit -m "sync: pkgs+repos $(date -Iseconds)" || { _err "commit failed"; return 1; }
-    git push && _ok "packages and repos synced"
+    git commit -m "sync: pkgs $(date -Iseconds)" || { _err "commit failed"; return 1; }
+    git push && _ok "packages synced"
   fi
 }
 
@@ -79,43 +77,6 @@ _private_sync_apt() {
   else
     _note "apt not found, skipped"
   fi
-}
-
-_private_sync_apt_sources() {
-  local dir="$1/apt-sources"
-  if [[ -d /etc/apt ]]; then
-    mkdir -p "$dir"
-    sudo cp -a /etc/apt/sources.list "$dir/" 2>/dev/null || :
-    [[ -d /etc/apt/sources.list.d ]] && sudo cp -a /etc/apt/sources.list.d "$dir/" 2>/dev/null || :
-    _ok "APT sources saved → $dir"
-  else
-    _note "no /etc/apt, skipped"
-  fi
-}
-
-# redact any inline creds in apt source URLs
-_private_redact_sources(){
-  local d="$1/apt-sources"
-  [[ -d "$d" ]] || return 0
-  local hits
-  hits="$(grep -rl "@.*://" "$d" 2>/dev/null || true)"
-  [[ -n "$hits" ]] || { _note "no inline creds found in APT sources"; return 0; }
-  print -l -- $hits | while read -r f; do
-    sed -i -E 's#(https?://)[^/[:space:]]+@#\1<REDACTED>@#g' "$f"
-  done
-  _ok "APT sources redacted"
-}
-
-_private_sync_apt_keys() {
-  local dir="$1/apt-keys"
-  mkdir -p "$dir"
-  if [[ -d /etc/apt/trusted.gpg.d ]]; then
-    sudo cp -a /etc/apt/trusted.gpg.d "$dir/" 2>/dev/null || :
-  fi
-  if command -v apt-key >/dev/null; then
-    sudo apt-key exportall > "$dir/apt-key-export.gpg" 2>/dev/null || :
-  fi
-  _ok "APT signing keys exported → $dir"
 }
 
 _private_sync_dpkg_sel() {
@@ -226,9 +187,9 @@ _private_sync_brew() {
   local dir="$1/brew"
   if command -v brew >/dev/null; then
     mkdir -p "$dir"
-    brew tap           > "$dir/taps.txt"    2>/dev/null || :
-    brew list          > "$dir/formulae.txt" 2>/dev/null || :
-    brew list --cask   > "$dir/casks.txt"   2>/dev/null || :
+    brew tap            > "$dir/taps.txt"      2>/dev/null || :
+    brew list           > "$dir/formulae.txt"  2>/dev/null || :
+    brew list --cask    > "$dir/casks.txt"     2>/dev/null || :
     _ok "Homebrew lists saved → $dir"
   else
     _note "brew not found, skipped"
@@ -260,20 +221,14 @@ _private_write_restore_min() {
 set -euo pipefail
 BASEDIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "==> Restoring APT sources"
-if [[ -d /etc/apt && -d "$BASEDIR/apt-sources" ]]; then
-  sudo cp -a "$BASEDIR/apt-sources/sources.list" /etc/apt/ 2>/dev/null || true
-  [[ -d "$BASEDIR/apt-sources/sources.list.d" ]] && sudo cp -a "$BASEDIR/apt-sources/sources.list.d" /etc/apt/ 2>/dev/null || true
-  [[ -d "$BASEDIR/apt-keys/trusted.gpg.d"    ]] && sudo cp -a "$BASEDIR/apt-keys/trusted.gpg.d"    /etc/apt/ 2>/dev/null || true
-  [[ -f "$BASEDIR/apt-keys/apt-key-export.gpg" ]] && sudo apt-key add "$BASEDIR/apt-keys/apt-key-export.gpg" 2>/dev/null || true
+echo "==> Installing APT manual packages"
+if command -v apt >/dev/null && [[ -f "$BASEDIR/apt-installed.txt" ]]; then
   sudo apt update || true
+  xargs -a "$BASEDIR/apt-installed.txt" -r sudo apt install -y || true
 fi
 
-echo "==> Installing APT manual packages"
-[[ -f "$BASEDIR/apt-installed.txt" ]] && xargs -a "$BASEDIR/apt-installed.txt" -r sudo apt install -y
-
 echo "==> Replaying dpkg selections (optional)"
-if [[ -f "$BASEDIR/dpkg-selections.txt" ]]; then
+if command -v dpkg >/dev/null && [[ -f "$BASEDIR/dpkg-selections.txt" ]]; then
   sudo dpkg --set-selections < "$BASEDIR/dpkg-selections.txt" || true
   sudo apt-get dselect-upgrade -y || true
 fi
@@ -307,7 +262,8 @@ import json, subprocess, sys
 j=json.load(open(sys.argv[1]))
 for p in j.get("venvs",{}).keys():
     try: subprocess.run(["pipx","install",p],check=False)
-    except: pass
+    except Exception:
+        pass
 PY
 fi
 
