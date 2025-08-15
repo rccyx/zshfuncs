@@ -3,6 +3,11 @@
 #  deps: feh or imv or sxiv optional, gsettings/qdbus/xfconf when present
 # ===============================
 
+wallpaper(){
+ waypaper
+}
+
+
 _have(){ command -v "$1" >/dev/null 2>&1; }
 
 # Detect desktop and session type
