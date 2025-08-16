@@ -255,6 +255,117 @@ s3rm(){
 s3buckets(){ _s3_check || return 1; _s3_list_buckets }
 s3who(){ aws sts get-caller-identity }
 
+# ---------- s3down: fetch from S3 to local dir ----------
+# Usage:
+#   s3down                      # interactive pick of objects, then choose dest dir
+#   s3down photos/ logs/ ./out  # download prefixes recursively into ./out
+#   s3down file1.txt file2.jpg  # download specific keys, will ask dest if not given
+# Alias:
+alias d3down='s3down'
+
+_s3_is_dirpath() { [[ -d "$1" || "$1" == */ || "$1" == "." || "$1" == ./* || "$1" == /* ]]; }
+
+_s3_plan_download(){
+  local bucket="$1"; shift
+  local dest="$1"; shift
+  local -a prefixes=() keys=() rest=("$@")
+  local t
+  for t in "${rest[@]}"; do
+    [[ "$t" == */ ]] && prefixes+=("$t") || keys+=("$t")
+  done
+
+  _hr
+  print -P "%F{244}PLAN: download%f from %F{6}s3://$bucket%f to %F{6}${dest:A}%f"
+  if (( ${#prefixes[@]} )); then
+    print -P "prefixes:"
+    for t in "${prefixes[@]}"; do print -P "  $t"; done
+  fi
+  if (( ${#keys[@]} )); then
+    print -P "objects:"
+    local k sz
+    for k in "${keys[@]}"; do
+      sz="$(aws s3api head-object --bucket "$bucket" --key "$k" --query 'ContentLength' --output text 2>/dev/null || echo 0)"
+      print -P "  $k  ($(_s3_hsize "$sz"))"
+    done
+  fi
+  _hr
+}
+
+s3down(){
+  emulate -L zsh
+  setopt pipefail
+
+  _s3_check || return 1
+
+  local bucket; bucket="$(_s3_pick_bucket)" || return 1
+  [[ -z "$bucket" ]] && { _err "no bucket chosen"; return 1; }
+
+  local -a args; args=("$@")
+  local dest="" last=""
+  if (( ${#args[@]} )); then last="${args[-1]}"; fi
+  if (( ${#args[@]} )) && _s3_is_dirpath "$last"; then
+    dest="${last%/}"
+    args=("${args[@]:0:${#args[@]}-1}")
+  fi
+
+  local -a targets=()
+  if (( ${#args[@]} == 0 )); then
+    _note "fetching object list..."
+    local rows; rows="$(_s3_list_all_keys "$bucket")" || true
+    [[ -z "$rows" ]] && { _warn "no objects found in $bucket"; return 0; }
+    targets=("${(@f)$(print -r -- "$rows" | awk -F'\t' '{printf "%s\t%s\n",$1,$2}' \
+      | fzf --multi --with-nth=1 --delimiter='\t' --height=70% --prompt="select to download ⇢ " \
+            --preview-window=down,8 --preview 'printf "Key: %s\nSize: %s bytes\n" {1} {2}' \
+      | awk -F'\t' '{print $1}')}")
+
+    (( ${#targets[@]} )) || { _warn "nothing selected"; return 1; }
+  else
+    targets=("${args[@]}")
+  fi
+
+  # pick destination if not provided
+  if [[ -z "$dest" ]]; then
+    local inp
+    read -r "?Download into which local directory [.] : " inp
+    dest="${inp:-.}"
+  fi
+  mkdir -p -- "$dest" || { _err "cannot create dest dir: $dest"; return 1; }
+
+  # show plan
+  _s3_plan_download "$bucket" "$dest" "${targets[@]}"
+
+  local ans
+  read -r "ans?Proceed with download [y/N]: "
+  [[ "$ans" =~ ^[Yy]$ ]] || { _warn "aborted"; return 1; }
+
+  # split into prefixes and keys
+  local -a prefixes=() keys=()
+  local t
+  for t in "${targets[@]}"; do
+    [[ "$t" == */ ]] && prefixes+=("$t") || keys+=("$t")
+  done
+
+  local rc=0 k p
+  # download keys
+  for k in "${keys[@]}"; do
+    local out="$dest/$k"
+    mkdir -p -- "${out:h}"
+    print -P "%F{244}→%f aws s3 cp s3://$bucket/$k $out"
+    aws s3 cp "s3://$bucket/$k" "$out" || rc=$?
+  done
+  # download prefixes
+  for p in "${prefixes[@]}"; do
+    local out="$dest/$p"
+    mkdir -p -- "$out"
+    print -P "%F{244}→%f aws s3 sync s3://$bucket/$p $out --exact-timestamps"
+    aws s3 sync "s3://$bucket/$p" "$out" --exact-timestamps || rc=$?
+  done
+
+  (( rc == 0 )) && _ok "download complete" || _err "download finished with errors (rc=$rc)"
+  return $rc
+}
+
+
 # ---------- rudimentary completions ----------
 # complete s3rm keys by listing first 1000 keys
 _s3rm_complete(){
