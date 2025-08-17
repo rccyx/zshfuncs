@@ -23,18 +23,37 @@ _s3_bucket_exists(){ aws s3api head-bucket --bucket "$1" >/dev/null 2>&1 }
 _s3_list_buckets(){ aws s3api list-buckets --query 'Buckets[].Name' --output text 2>/dev/null | tr '\t' '\n' | sort -u }
 
 _s3_pick_bucket(){
-  local default="ashgw-private-buckup" pick lines
+  local pick lines
   local -a existing; existing=("${(@f)$(_s3_list_buckets)}")
-  if [[ -n "$S3_BUCKET" ]]; then echo "$S3_BUCKET"; return 0; fi
-  lines=$(printf "%s\n" "$default" "${existing[@]}" | awk 'BEGIN{seen[""]=1} !seen[$0]++')
-  pick=$(
-    print -r -- "$lines" \
-    | fzf --prompt="S3 bucket ⇢ " --header="Pick or type new, Enter to confirm" --print-query --height=40% \
-    | awk 'NR==1{q=$0} END{print (NR>1?$0:q)}'
-  )
-  [[ -n "$pick" ]] && echo "$pick" || echo "$default"
-}
 
+  # env override
+  if [[ -n "$S3_BUCKET" ]]; then echo "$S3_BUCKET"; return 0; fi
+
+  if command -v fzf >/dev/null 2>&1; then
+    if (( ${#existing[@]} )); then
+      pick=$(
+        printf "%s\n" "${existing[@]}" \
+        | awk 'BEGIN{seen[""]=1} !seen[$0]++' \
+        | fzf --prompt="S3 bucket ⇢ " \
+              --header="Pick or type new, Enter to confirm" \
+              --print-query --height=40% \
+        | awk 'NR==1{q=$0} END{print (NR>1?$0:q)}'
+      )
+    else
+      read -r "?Bucket name: " pick
+    fi
+  else
+    if (( ${#existing[@]} )); then
+      print -P "Buckets:"; printf "  %s\n" "${existing[@]}" >&2
+      read -r "?Bucket name: " pick
+      [[ -z "$pick" ]] && pick="${existing[1]}"
+    else
+      read -r "?Bucket name: " pick
+    fi
+  fi
+
+  [[ -n "$pick" ]] && echo "$pick" || { _err "no bucket chosen"; return 1; }
+}
 _s3_secure_create_if_missing(){
   local b="$1" r="$(_s3_region)"
   if _s3_bucket_exists "$b"; then _note "bucket exists: $b"; return 0; fi
