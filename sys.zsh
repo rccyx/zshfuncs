@@ -51,6 +51,15 @@ ashgw() {
     <(printf "%s\n" "$info")
 }
 
+diskusage() {
+  if ! command -v dua >/dev/null 2>&1; then
+    echo -e "\e[1;31m❌ dua not found.\e[0m"
+    echo -e "👉 Install it with: \e[1;34mcargo install dua-cli\e[0m"
+    return 1
+  fi
+  dua i /
+}
+
 diskspace() {
   local df_output=$(df -h $HOME | tail -n 1)
   local total=$(echo $df_output | awk '{print $2}')
