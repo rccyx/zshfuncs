@@ -1,9 +1,9 @@
 # Open sites as native Chrome app windows using "Default" profile.
 # Usage:
-#   webapp                    # fzf picker
-#   webapp x                  # alias key
-#   webapp https://x.com      # direct URL
-webapp() {
+#   app                    # fzf picker
+#   app x                  # alias key
+#   app https://x.com      # direct URL
+app() {
   emulate -L zsh
   setopt localoptions err_return no_unset
 
@@ -42,13 +42,13 @@ webapp() {
       sel=$(
         for k in "${keys[@]}"; do
           printf "%-12s %s\n" "$k" "${WEBAPPS[$k]}"
-        done | fzf --prompt="webapp> " --height=40% --border --reverse
+        done | fzf --prompt="app> " --height=40% --border --reverse
       )
       [[ -z ${sel-} ]] && return 1
       key=${sel%%[[:space:]]*}
       target=${WEBAPPS[$key]}
     else
-      print -P "%F{yellow}No TTY for fzf. Run from a terminal, or bind your key to launch a terminal (e.g. kitty -e zsh -ic webapp).%f"
+      print -P "%F{yellow}No TTY for fzf. Run from a terminal, or bind your key to launch a terminal (e.g. kitty -e zsh -ic app).%f"
       return 1
     fi
   fi
