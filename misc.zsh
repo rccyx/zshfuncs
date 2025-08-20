@@ -11,8 +11,17 @@ man () {
       man "$@"
 }
 
+# opens apps as if they're native
+webapp() {
+  if [[ -z "$1" ]]; then
+    echo "Usage: webapp <url>"
+    return 1
+  fi
+  google-chrome --app="$1" --new-window &
+}
 
- remindme() {
+
+remindme() {
   if [ -z "$1" ] || [ -z "$2" ]; then
     echo "Usage: remindme <seconds> <message>"
     return 1
@@ -47,3 +56,4 @@ precmd() {
         fi
     fi
 }
+
