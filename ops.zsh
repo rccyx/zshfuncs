@@ -242,6 +242,213 @@ cpd() {
   _ok "copied files from '$dir' to clipboard ($human)"
 }
 
+
+# Elite dir ⇄ clipboard with real actions, progress, and safe defaults
+clipdir() {
+  emulate -L zsh
+  setopt err_return pipe_fail no_unset
+
+  # If no subcommand, show a simple picker that maps to real args
+  if [[ -z ${1-} ]]; then
+    if _have fzf; then
+      local choice
+      choice=$(
+        printf "%s\n" \
+          "copy   archive current dir to clipboard" \
+          "paste  extract from clipboard to here" \
+          "paste-to  extract from clipboard to chosen dir" \
+          "help   show usage" |
+        fzf --prompt='📦 clipdir ⇢ ' --height=40% --border --reverse --ansi \
+            --header=$'↑↓ to move • Enter to run • Esc to quit'
+      ) || return 1
+      choice=${choice%% *}  # first token only
+      case "$choice" in
+        copy)      set -- copy ;;
+        paste)     set -- paste ;;
+        paste-to)
+          print -P -n "%F{6}Target directory%f: "
+          local t; read -r t || return 1
+          [[ -z $t ]] && { _err "no directory given"; return 1; }
+          mkdir -p -- "$t" || { _err "cannot create '$t'"; return 1; }
+          set -- paste "$t"
+          ;;
+        help|*)    set -- --help ;;
+      esac
+    else
+      set -- --help
+    fi
+  fi
+
+  local sub="$1"; shift || true
+
+  if [[ "$sub" == "-h" || "$sub" == "--help" ]]; then
+    print -P "%F{6}Usage%f:"
+    print -P "  %F{3}clipdir copy%f [--all] [--zstd|--gzip|--no-compress] [--exclude PATTERN]... [--include GLOB]... [--force]"
+    print -P "  %F{3}clipdir paste%f [TARGET_DIR] [--force]"
+    print -P "%F{8}Defaults%f: excludes heavy junk, uses zstd or gzip if available, shows progress if pv exists."
+    return 1
+  fi
+
+  case "$sub" in
+    copy)
+      local all=false comp="auto" force=false
+      local -a ex includes exopts tarpaths
+      local use_pv=false
+      local max_mb="${CLIPDIR_MAX_MB:-200}"
+      _have pv && use_pv=true
+
+      # sane default excludes
+      ex=(
+        .git .github .gitlab
+        node_modules .pnpm-store .yarn .npm
+        .venv venv __pycache__ .cache
+        dist build .next out .turbo .vercel
+        target vendor
+        .idea .vscode
+        "*.iso" "*.zip" "*.tar*" "*.mp4" "*.mp3" "*.mov" "*.avi" "*.mkv"
+        "*.jpg" "*.jpeg" "*.png" "*.webp" "*.gif" "*.pdf"
+      )
+
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --all) all=true ;;
+          --exclude) shift; [[ -n ${1-} ]] && ex+=("$1") ;;
+          --include) shift; [[ -n ${1-} ]] && includes+=("$1") ;;
+          --zstd|--compress=zstd) comp="zstd" ;;
+          --gzip|--compress=gzip) comp="gzip" ;;
+          --no-compress) comp="none" ;;
+          --force) force=true ;;
+          *) _err "unknown option $1"; return 1 ;;
+        esac
+        shift
+      done
+
+      # build tar args
+      if ! $all; then
+        for p in "${ex[@]}"; do exopts+=("--exclude=$p"); done
+      fi
+      if [[ ${#includes[@]} -gt 0 ]]; then
+        tarpaths=("${includes[@]}")
+      else
+        tarpaths=(".")
+      fi
+
+      # pick compressor
+      local comp_cmd="" comp_tag=""
+      if [[ "$comp" == "zstd" || "$comp" == "auto" ]]; then
+        if _have zstd; then comp_cmd="zstd -q -T0 -3"; comp_tag="zstd"; fi
+      fi
+      if [[ -z "$comp_cmd" && ( "$comp" == "gzip" || "$comp" == "auto" ) ]]; then
+        if _have pigz; then comp_cmd="pigz -c -6"; comp_tag="gzip"
+        elif _have gzip; then comp_cmd="gzip -c -6"; comp_tag="gzip"; fi
+      fi
+      [[ -z "$comp_cmd" ]] && comp_tag="none"
+
+      # estimate uncompressed size for progress and limit (can skip with CLIPDIR_SKIP_SIZE=1)
+      local bytes=0
+      if [[ -z ${CLIPDIR_SKIP_SIZE-} ]]; then
+        bytes=$(tar -cf - "${exopts[@]}" "${tarpaths[@]}" 2>/dev/null | wc -c | tr -d '[:space:]') || bytes=0
+      fi
+      local limit=$(( max_mb * 1024 * 1024 ))
+      if (( bytes > 0 && bytes > limit )) && ! $force; then
+        local human; if _have numfmt; then human=$(numfmt --to=iec --suffix=B "$bytes"); else human="${bytes}B"; fi
+        read -q "REPLY?⚠️ $human exceeds ${max_mb}MiB. Copy anyway? [y/N] "; echo
+        [[ $REPLY =~ ^[Yy]$ ]] || { _err "aborted"; return 1; }
+      fi
+
+      # archive → optional compress → clipboard, with progress if pv exists
+      if [[ "$comp_tag" != "none" ]]; then
+        if $use_pv && (( bytes > 0 )); then
+          tar -cf - "${exopts[@]}" "${tarpaths[@]}" 2>/dev/null \
+            | pv -ptebar -i 0.2 -s "${bytes:-0}" \
+            | eval "$comp_cmd" \
+            | _clip
+        else
+          tar -cf - "${exopts[@]}" "${tarpaths[@]}" 2>/dev/null \
+            | eval "$comp_cmd" \
+            | _clip
+        fi
+        _ok "copied ${PWD##*/} to clipboard (compressed: $comp_tag)"
+      else
+        if $use_pv && (( bytes > 0 )); then
+          tar -cf - "${exopts[@]}" "${tarpaths[@]}" 2>/dev/null \
+            | pv -ptebar -i 0.2 -s "${bytes:-0}" \
+            | _clip
+        else
+          tar -cf - "${exopts[@]}" "${tarpaths[@]}" 2>/dev/null | _clip
+        fi
+        _ok "copied ${PWD##*/} to clipboard"
+      fi
+      ;;
+    paste)
+      local target="${1:-.}"; shift || true
+      local force=false
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --force) force=true ;;
+          *) _err "unknown option $1"; return 1 ;;
+        esac
+        shift
+      done
+      [[ -d "$target" ]] || { _err "'$target' is not a directory"; return 1; }
+      if [[ -n "$(ls -A "$target" 2>/dev/null)" ]] && ! $force; then
+        print -P "%F{3}📂 '%f%F{6}$target%f%F{3}' is not empty%f"
+        read -q "REPLY?Extract here anyway? [y/N] "; echo
+        [[ $REPLY =~ ^[Yy]$ ]] || { _err "aborted"; return 1; }
+      fi
+
+      local tmp; tmp="$(mktemp -t clipdir.XXXXXX)" || { _err "mktemp failed"; return 1; }
+      _paste > "$tmp" || { rm -f "$tmp"; _err "no clipboard data"; return 1; }
+
+      # detect format
+      local fmt="tar"
+      if _have file; then
+        case "$(file -b --mime-type "$tmp")" in
+          application/zstd) fmt="zst" ;;
+          application/gzip) fmt="gz" ;;
+        esac
+      else
+        local magic; magic=$(head -c 4 "$tmp" | od -An -t x1 | tr -d ' \n')
+        case "$magic" in
+          28b52ffd) fmt="zst" ;;
+          1f8b08*)  fmt="gz" ;;
+        esac
+      fi
+
+      # extract with progress when possible
+      case "$fmt" in
+        zst)
+          _have zstd || { rm -f "$tmp"; _err "zstd not installed"; return 1; }
+          if _have pv; then pv -ptebar -i 0.2 "$tmp" | zstd -q -d | tar -xvf - -C "$target"
+          else zstd -q -d <"$tmp" | tar -xvf - -C "$target"; fi
+          ;;
+        gz)
+          local gzcat
+          if _have pigz; then gzcat="pigz -dc"
+          elif _have gzip; then gzcat="gzip -dc"
+          else gzcat="cat"; fi
+          if _have pv && [[ "$gzcat" != "cat" ]]; then
+            pv -ptebar -i 0.2 "$tmp" | eval "$gzcat" | tar -xvf - -C "$target"
+          else
+            eval "$gzcat <\"$tmp\"" | tar -xvf - -C "$target"
+          fi
+          ;;
+        *)
+          if _have pv; then pv -ptebar -i 0.2 "$tmp" | tar -xvf - -C "$target"
+          else tar -xvf "$tmp" -C "$target"; fi
+          ;;
+      esac
+
+      rm -f "$tmp"
+      _ok "pasted into $(realpath "$target")"
+      ;;
+    *)
+      _err "usage: clipdir {copy|paste} [...]"
+      return 1
+      ;;
+  esac
+}
+
 # FZF delete picker
 rmw() {
   _have fzf || { echo "fzf missing"; return 1; }
