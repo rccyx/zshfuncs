@@ -46,7 +46,7 @@ __kitty_rc_ok() {
 # in Kitty outside tmux: visible screen via kitty @ get-text
 # else: last N zsh commands as a fallback
 cop() {
-  local n=${1:-100}
+  local n=${1:-700}
   local max_lines=10000
   (( n > max_lines )) && n=$max_lines
 
