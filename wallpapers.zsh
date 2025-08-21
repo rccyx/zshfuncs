@@ -1,190 +1,83 @@
-# ===============================
-#  Universal wallpaper helpers
-#  deps: feh or imv or sxiv optional, gsettings/qdbus/xfconf when present
-# ===============================
-
-wallpaper(){
- waypaper
-}
-
+# ~/.zsh/wallpaper.zsh
+# Waypaper UI + swww backend. Persistent.
 
 _have(){ command -v "$1" >/dev/null 2>&1; }
+_asroot(){ [ "$EUID" -eq 0 ] && "$@" || sudo "$@"; }
+_log(){ printf "[wallpaper] %s\n" "$*"; }
 
-# Detect desktop and session type
-_de_id(){
-  local de="$(printf "%s%s" "$XDG_CURRENT_DESKTOP" "$DESKTOP_SESSION" | tr '[:upper:]' '[:lower:]')"
-  local st="${XDG_SESSION_TYPE:-}"
-  printf "%s|%s" "$de" "$st"
+WPDIR="${WALLPAPER_DIR:-$HOME/.wallpapers}"
+INI="$HOME/.config/waypaper/config.ini"
+
+_start_daemon(){
+  pgrep -x swww-daemon >/dev/null || swww-daemon & disown
 }
 
-# Persist wallpaper in the current environment
-_persist_wall(){
-  local file="$1"
-  local de st; IFS='|' read -r de st <<< "$(_de_id)"
+_write_ini(){
+  mkdir -p "$(dirname "$INI")" "$WPDIR"
+  cat >"$INI" <<EOF
+[Settings]
+folder = $WPDIR
+backend = swww
+fill = Fill
+monitors = All
+subfolders = False
+all_subfolders = False
+show_hidden = False
+post_command =
+swww_transition_type = any
+swww_transition_step = 90
+swww_transition_angle = 0
+swww_transition_duration = 2
+swww_transition_fps = 60
+EOF
+}
 
-  case "$de" in
-    *gnome*|*budgie*|*cinnamon*|*pantheon*)
-      # GNOME family via gsettings
-      if _have gsettings; then
-        local uri="file://$file"
-        gsettings set org.gnome.desktop.background picture-uri "$uri" >/dev/null 2>&1
-        gsettings set org.gnome.desktop.background picture-uri-dark "$uri" >/dev/null 2>&1
-        gsettings set org.gnome.desktop.background picture-options 'zoom' >/dev/null 2>&1
-        return 0
+wallpaper(){
+  case "${1:-}" in
+    setup)
+      _log "installing swww if missing"
+      _asroot apt-get update -y
+      _asroot apt-get install -y swww || { _log "apt install swww failed"; return 1; }
+      if ! _have waypaper; then
+        _log "installing Waypaper via pipx"
+        _asroot apt-get install -y pipx python3-gi gir1.2-gtk-4.0 libadwaita-1-0 || true
+        pipx install --quiet waypaper || true
       fi
+      _write_ini
+      _log "setup done. Add the two Hyprland lines from the instructions, then relogin."
       ;;
-    *kde*|*plasma*)
-      # KDE Plasma
-      if _have plasma-apply-wallpaperimage; then
-        plasma-apply-wallpaperimage "$file" >/dev/null 2>&1 && return 0
-      elif _have qdbus || _have qdbus-qt5; then
-        ${$(command -v qdbus):-qdbus-qt5} org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript \
-          "var d=desktops(); for (i=0;i<d.length;i++){ d[i].wallpaperPlugin='org.kde.image'; d[i].currentConfigGroup=['Wallpaper','org.kde.image','General']; d[i].writeConfig('Image','file://$file') }" >/dev/null 2>&1 && return 0
-      fi
+    ui|"")
+      _start_daemon
+      waypaper --backend swww --folder "$WPDIR" &
       ;;
-    *xfce*)
-      # XFCE
-      if _have xfconf-query; then
-        xfconf-query -c xfce4-desktop -l | grep -E 'last-image$' | \
-          xargs -I{} xfconf-query -c xfce4-desktop -p {} -s "$file" >/dev/null 2>&1 && return 0
-      fi
+    set)
+      shift
+      [ -f "${1:-}" ] || { _log "pass an image file"; return 1; }
+      _start_daemon
+      waypaper --backend swww --wallpaper "$1" || { _log "set failed"; return 1; }
+      _log "set → $1"
       ;;
-    *mate*)
-      # MATE
-      if _have gsettings; then
-        gsettings set org.mate.background picture-filename "$file" >/dev/null 2>&1
-        gsettings set org.mate.background picture-options zoom >/dev/null 2>&1
-        return 0
-      fi
+    random)
+      _start_daemon
+      waypaper --backend swww --folder "$WPDIR" --random || { _log "random failed"; return 1; }
+      _log "random pick applied"
       ;;
-    *lxqt*|*lxde*)
-      # LXQt or LXDE
-      if _have pcmanfm-qt; then
-        pcmanfm-qt --set-wallpaper "$file" --wallpaper-mode=fit >/dev/null 2>&1 && return 0
-      elif _have pcmanfm; then
-        pcmanfm --set-wallpaper "$file" >/dev/null 2>&1 && return 0
-      fi
+    restore)
+      _start_daemon
+      waypaper --backend swww --restore || { _log "restore failed"; return 1; }
+      _log "restored last pick"
       ;;
-    *sway*)
-      # Sway Wayland
-      if _have swww; then
-        swww img "$file" --transition-type any >/dev/null 2>&1 && return 0
-      elif _have swaymsg; then
-        pkill -x swaybg >/dev/null 2>&1 || true
-        nohup swaybg -i "$file" -m fill >/dev/null 2>&1 &
-        return 0
-      fi
+    status)
+      _have swww && swww query || true
+      _have waypaper && waypaper --list 2>/dev/null || true
       ;;
-    *hypr*|*hyprland*)
-      # Hyprland
-      if _have hyprctl; then
-        hyprctl hyprpaper preload "$file" >/dev/null 2>&1
-        hyprctl hyprpaper wallpaper ",$file" >/dev/null 2>&1 && return 0
-      fi
-      if _have swww; then
-        swww img "$file" >/dev/null 2>&1 && return 0
-      fi
+    destroy)
+      _log "manual cleanup only. remove the Hyprland exec-once lines and uninstall if you want"
+      ;;
+    *)
+      _log "usage: wallpaper [setup|ui|set <img>|random|restore|status|destroy]"
+      return 1
       ;;
   esac
-
-  # Fallbacks
-  if [[ -n "$DISPLAY" && -z "$WAYLAND_DISPLAY" ]] && _have feh; then
-    feh --bg-fill "$file" >/dev/null 2>&1
-    # user can autostart ~/.fehbg on X11 WMs to persist across restarts
-    return 0
-  fi
-
-  return 1
 }
 
-# Public API
-
-# Set an exact image. Works everywhere. Persists when possible.
-wpset(){
-  local f="$1"
-  [[ -f "$f" ]] || { echo "pass an image file"; return 1; }
-  if ! _persist_wall "$f"; then
-    echo "set temporary background. install feh on X11 or swww/swaybg on Wayland for persistence"
-  fi
-  echo "wallpaper set → $f"
-}
-
-# Random from a folder
-wprand(){
-  local dir="${1:-$HOME/Pictures/Wallpapers}"
-  [[ -d "$dir" ]] || { echo "dir not found: $dir"; return 1; }
-  local img
-  img="$(find "$dir" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.bmp' -o -iname '*.avif' -o -iname '*.heic' \) | shuf -n1)"
-  [[ -z "$img" ]] && { echo "no images in $dir"; return 1; }
-  wpset "$img"
-}
-
-# Cycle on an interval. Stop with wpstop.
-wpcycle(){
-  local dir="${1:-$HOME/Pictures/Wallpapers}" sec="${2:-600}"
-  [[ -d "$dir" ]] || { echo "dir not found: $dir"; return 1; }
-  mkdir -p "$HOME/.cache"
-  local pidfile="$HOME/.cache/wpcycle.pid"
-  if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
-    echo "already cycling (pid $(cat "$pidfile"))"; return 0
-  fi
-  {
-    while :; do
-      wprand "$dir"
-      sleep "$sec" || exit 0
-    done
-  } >/dev/null 2>&1 &
-  echo $! > "$pidfile"
-  echo "cycle every ${sec}s (pid $(cat "$pidfile"))"
-}
-
-# Stop the cycle
-wpstop(){
-  local p="$HOME/.cache/wpcycle.pid"
-  if [[ -f "$p" ]] && kill -0 "$(cat "$p")" 2>/dev/null; then
-    kill "$(cat "$p")" && rm -f "$p" && echo "cycle stopped"
-  else
-    echo "no cycle running"
-  fi
-}
-
-# Grid picker thumbnails if available, else clean fallbacks
-# 1) sxiv -to prints marked file paths. Mark with m, quit with q.
-# 2) feh thumbnails with --action calling wpset.
-# 3) last resort browse one by one with imv.
-wppick(){
-  local dir="${1:-$HOME/Pictures/Wallpapers}"
-  [[ -d "$dir" ]] || { echo "dir not found: $dir"; return 1; }
-
-  if _have sxiv; then
-    local pick; pick="$(sxiv -to "$dir" 2>/dev/null | head -n1)"
-    [[ -z "$pick" ]] && { echo "no selection. mark with m then q"; return 1; }
-    wpset "$pick"; return
-  fi
-
-  if _have feh; then
-    feh --scale-down --auto-zoom --thumbnails --index-info '%n/%m' \
-        --action "zsh -c 'wpset %F'" "$dir"
-    return
-  fi
-
-  if _have imv; then
-    imv -f "$dir"
-    return
-  fi
-
-  echo "install sxiv or feh or imv for visual picking"
-}
-
-# One by one viewer no grid
-wpbrowse(){
-  local dir="${1:-$HOME/Pictures/Wallpapers}"
-  [[ -d "$dir" ]] || { echo "dir not found: $dir"; return 1; }
-  if _have imv; then
-    imv -f "$dir"
-  elif _have feh; then
-    feh --auto-zoom "$dir"
-  else
-    echo "install imv or feh"
-  fi
-}
