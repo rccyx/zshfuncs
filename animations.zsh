@@ -1,4 +1,4 @@
-clock() { tty-clock -c -C 5 -s }
+clock() { tty-clock -c -C 6 -s }
 sound-animate()  { cava }
 
 animations() {
