@@ -1,6 +1,6 @@
 # =================== PACKAGE-ONLY SYNC ===================
 # Backs up: APT manual pkgs, dpkg selections,
-# snaps, flatpaks, pip/pipx, npm/pnpm, cargo, rustup, nix, brew,
+# snaps, flatpaks, pip/pipx, npm/pnpm, cargo, rustup, go, nix, brew,
 # and GNOME keybindings only if GNOME is running.
 # Writes: restore.sh inside $backup_dir
 # No APT sources, no keyrings.
@@ -41,6 +41,7 @@ syncall() {
 
   _private_sync_cargo       "$backup_dir"
   _private_sync_rustup      "$backup_dir"
+  _private_sync_go          "$backup_dir"
   _private_sync_nix         "$backup_dir"
   _private_sync_brew        "$backup_dir"
 
@@ -173,6 +174,39 @@ _private_sync_rustup() {
   fi
 }
 
+_private_sync_go() {
+  local out="$1/go-tools.txt"
+  if command -v go >/dev/null; then
+    local gobin
+    gobin="$(go env GOBIN 2>/dev/null)"
+    [[ -z "$gobin" ]] && gobin="$(go env GOPATH 2>/dev/null)/bin"
+    [[ -z "$gobin" ]] && gobin="$HOME/go/bin"
+
+    if [[ -d "$gobin" ]]; then
+      local tmp; tmp="$(mktemp)"
+      # enumerate executables in GOBIN and try to extract module@version
+      find "$gobin" -maxdepth 1 -type f -perm -u+x 2>/dev/null | while read -r bin; do
+        local mod
+        mod="$(go version -m "$bin" 2>/dev/null | awk '/^mod[[:space:]]/ {print $2"@"$3; exit}')"
+        if [[ -n "$mod" ]]; then
+          print -- "$mod"
+        else
+          print -- "# no module info: $(basename "$bin")"
+        fi
+      done | sort -u > "$tmp"
+      mv "$tmp" "$out"
+      _ok "Go tools detected from $(basename "$gobin") saved → $out"
+    else
+      : > "$out"
+      _note "GOBIN not found, wrote empty go-tools.txt"
+    fi
+
+    go env GOPATH GOBIN GOOS GOARCH > "$1/go-env.txt" 2>/dev/null || :
+  else
+    _note "go not found, skipped"
+  fi
+}
+
 _private_sync_nix() {
   local out="$1/nix-profile.txt"
   if command -v nix >/dev/null; then
@@ -274,6 +308,11 @@ echo "==> Restoring npm and pnpm globals"
 echo "==> Restoring Cargo and rustup"
 [[ -f "$BASEDIR/cargo-crates.txt"      ]] && command -v cargo  >/dev/null && xargs -a "$BASEDIR/cargo-crates.txt" -r -n1 cargo install || true
 [[ -f "$BASEDIR/rustup-toolchains.txt" ]] && command -v rustup >/dev/null && awk '{print $1}' "$BASEDIR/rustup-toolchains.txt" | xargs -r -n1 rustup toolchain install || true
+
+echo "==> Restoring Go tools"
+if command -v go >/dev/null && [[ -f "$BASEDIR/go-tools.txt" ]]; then
+  awk '!/^($|#)/{print $0}' "$BASEDIR/go-tools.txt" | xargs -r -n1 go install || true
+fi
 
 echo "==> Restoring Homebrew lists"
 if command -v brew >/dev/null && [[ -d "$BASEDIR/brew" ]]; then
