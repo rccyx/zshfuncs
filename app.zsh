@@ -31,6 +31,8 @@ app() {
     instagram  https://instagram.com
     ig         https://instagram.com
     grok       https://x.com/i/grok
+    whatsapp   https://web.whatsapp.com
+    wh         https://web.whatsapp.com
   )
 
   if [[ -n ${1-} ]]; then
