@@ -492,7 +492,7 @@ _s3_plan_delete(){
   _hr
 }
 
-# ---------- s3rm ----------
+# ---------- s3rm (now supports selecting folders via fzf) ----------
 s3rm(){
   emulate -L zsh
   setopt pipefail
@@ -500,35 +500,72 @@ s3rm(){
 
   local bucket; bucket="$(_s3_pick_bucket)" || return 1
 
-  local mode="" # keys or prefix
-  local -a targets=()
-
+  local -a del_keys=() del_pfx=()
   if (( $# == 0 )); then
     _note "fetching object list..."
     local rows; rows="$(_s3_list_all_keys "$bucket")" || true
     [[ -z "$rows" ]] && { _warn "no objects found in $bucket"; return 0; }
-    targets=("${(@f)$(print -r -- "$rows" \
+
+    # derive folder prefixes from keys, include all parent dirs
+    local dirs
+    dirs="$(
+      print -r -- "$rows" \
+      | awk -F'\t' '{print $1}' \
+      | awk -F'/' '
+          NF>1 {
+            p=""
+            for (i=1; i<NF; i++) {
+              if (i==1) p=$1; else p=p "/" $i
+              seen[p "/"]=1
+            }
+          }
+          END { for (d in seen) print d }
+        ' \
+      | sort
+    )"
+
+    # build combined list: <DIR> lines first, then object rows
+    local combined
+    combined="$(
+      { print -r -- "$dirs" | awk '{printf "%s\t<DIR>\t\n",$0}'; print -r -- "$rows"; } \
+      | awk 'BEGIN{OFS="\t"}{print $1,$2,$3}'
+    )"
+
+    # pick from both dirs and objects
+    local sel
+    sel="$(
+      print -r -- "$combined" \
       | fzf --multi --with-nth=1 --delimiter=$'\t' --height=70% \
-            --prompt="select to delete ⇢ " \
+            --prompt="select keys or folders ⇢ " \
             --preview-window=down,8 \
-            --preview 'printf "Key: %s\nSize: %s bytes\n" {1} {2}' \
-      | awk -F'\t' '{print $1}')}")
-    (( $#targets )) || { _warn "nothing selected"; return 1; }
-    mode="keys"
+            --preview 'k={1}; s={2}; if [ "$s" = "<DIR>" ]; then printf "Prefix: %s\nRecursive delete\n" "$k"; else printf "Key: %s\nSize: %s bytes\n" "$k" "$s"; fi' \
+      | awk -F'\t' '{print $1 "\t" $2}'
+    )" || true
+
+    [[ -z "$sel" ]] && { _warn "nothing selected"; return 1; }
+
+    # split selection into prefixes and keys
+    local a b
+    while IFS=$'\t' read -r a b; do
+      if [[ "$b" == "<DIR>" ]]; then del_pfx+=("$a"); else del_keys+=("$a"); fi
+    done <<< "$sel"
   else
-    local anyprefix=0 t
-    for t in "$@"; do [[ "$t" == */ ]] && anyprefix=1; done
-    if (( anyprefix )); then
-      mode="prefix"; for t in "$@"; do [[ "$t" == */ ]] && targets+=("$t"); done
-    else
-      mode="keys"; targets=("$@")
-    fi
+    # args mode: any arg ending with / is a prefix, others are keys
+    local t any=0
+    for t in "$@"; do
+      (( any++ ))
+      if [[ "$t" == */ ]]; then del_pfx+=("$t"); else del_keys+=("$t"); fi
+    done
+    (( any )) || { _warn "nothing to delete"; return 1; }
   fi
 
-  _s3_plan_delete "$bucket" "$mode" "${targets[@]}"
+  # plans
+  (( ${#del_pfx} )) && _s3_plan_delete "$bucket" "prefix" "${del_pfx[@]}"
+  (( ${#del_keys} )) && _s3_plan_delete "$bucket" "keys"   "${del_keys[@]}"
 
-  local confirm
-  if [[ "$mode" == "prefix" ]]; then
+  # confirmation: bucket name if any prefixes selected, else "DELETE"
+  local confirm rc=0
+  if (( ${#del_pfx} )); then
     print -n "Type the bucket name '$bucket' to confirm recursive delete: "
     read -r confirm
     [[ "$confirm" == "$bucket" ]] || { _warn "confirmation mismatch. aborted."; return 1; }
@@ -538,16 +575,20 @@ s3rm(){
     [[ "$confirm" == "DELETE" ]] || { _warn "confirmation mismatch. aborted."; return 1; }
   fi
 
-  local rc=0 k
-  if [[ "$mode" == "prefix" ]]; then
-    for k in "${targets[@]}"; do
+  # execute recursive deletes for prefixes
+  if (( ${#del_pfx} )); then
+    local k
+    for k in "${del_pfx[@]}"; do
       print -P "%F{244}→%f aws s3 rm s3://$bucket/$k --recursive"
       _retry aws $(_s3_cli_args) s3 rm "s3://$bucket/$k" --recursive || rc=$?
     done
-  else
-    local tmp payload
+  fi
+
+  # execute batched delete for individual keys
+  if (( ${#del_keys} )); then
+    local tmp payload k
     tmp="$(mktemp)"; : > "$tmp"
-    for k in "${targets[@]}"; do printf '{"Key":"%s"}\n' "$k" >> "$tmp"; done
+    for k in "${del_keys[@]}"; do printf '{"Key":"%s"}\n' "$k" >> "$tmp"; done
     payload="$(jq -cs '{Objects: ., Quiet: false}' "$tmp")"
     print -P "%F{244}→%f aws s3api delete-objects (batched)"
     _retry aws $(_s3_cli_args) s3api delete-objects --bucket "$bucket" --delete "$payload" >/dev/null || rc=$?
