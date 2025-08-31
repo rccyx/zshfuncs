@@ -30,7 +30,7 @@ app() {
     fb         https://facebook.com
     instagram  https://instagram.com
     ig         https://instagram.com
-    grok       https://x.com/i/grok
+    grok       https://grok.com
     whatsapp   https://web.whatsapp.com
     wh         https://web.whatsapp.com
   )
