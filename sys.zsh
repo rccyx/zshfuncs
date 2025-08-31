@@ -73,6 +73,30 @@ storage(){
   sudo ncdu / --exclude /proc --exclude /sys
 }
 
+
+# Suspend the system (sleep)
+suspend() {
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl suspend
+  elif command -v pm-suspend >/dev/null 2>&1; then
+    pm-suspend
+  else
+    echo "No suspend command found (systemctl/pm-suspend missing)."
+    return 1
+  fi
+}
+
+# Hibernate the system
+hibernate() {
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl hibernate
+  elif command -v pm-hibernate >/dev/null 2>&1; then
+    pm-hibernate
+  else
+    echo "No hibernate command found (systemctl/pm-hibernate missing)."
+    return 1
+  fi
+}
 # =========================
 # psf  → find processes and kill selected
 # psf             pick and SIGTERM
