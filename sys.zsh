@@ -117,7 +117,124 @@ psf() {
   fi
 }
 
+# heat: minimal, fast, quiet
+# default → "59°C"
+# flags:
+#   -r    raw number only, e.g. "59"
+#   -v    verbose line, e.g. "CPU 59°C GPU 47°C FAN 1200 rpm"
+#   -g    try to include GPU (only used with -v)
+#   -f    try to include FAN (only used with -v)
+# env:
+#   HEAT_CPU_PATH=/sys/class/hwmon/hwmonX/tempY_input
+#   HEAT_GPU=auto|nvidia|amdgpu|off   (default auto)
+#   HEAT_FAN=auto|off                 (default auto)
+heat() {
+  emulate -L zsh
+  setopt pipefail null_glob nonomatch extended_glob
+  unsetopt xtrace verbose  # kill any inherited tracing
 
+  local cpu_hint="/sys/class/hwmon/hwmon5/temp1_input"
+  local cpu_env="${HEAT_CPU_PATH:-}"
+  local want_gpu="${HEAT_GPU:-auto}"
+  local want_fan="${HEAT_FAN:-auto}"
+  local raw=0 verbose=0 force_gpu=off force_fan=off
 
-alias sysinfo="agfetch"
+  while getopts ":rgfv" opt; do
+    case $opt in
+      r) raw=1 ;;
+      v) verbose=1 ;;
+      g) force_gpu=on ;;
+      f) force_fan=on ;;
+    esac
+  done
+
+  _read_temp_file() {
+    local p="$1" v
+    [[ -r "$p" ]] || return 1
+    v=$(<"$p") || return 1
+    [[ -n "$v" ]] || return 1
+    if [[ "$v" -gt 200 ]]; then printf "%d" $(( v/1000 )); else printf "%d" "$v"; fi
+  }
+
+  _find_cpu_temp() {
+    local v h l f
+    [[ -n "$cpu_env" ]] && v=$(_read_temp_file "$cpu_env") && { print -r -- "$v"; return 0; }
+    v=$(_read_temp_file "$cpu_hint") && { print -r -- "$v"; return 0; }
+    local -a hmons; hmons=( /sys/class/hwmon/hwmon*(N) )
+    for h in $hmons; do
+      local -a labels; labels=( "$h"/temp*_label(N) )
+      for l in $labels; do
+        case "$(tr '[:upper:]' '[:lower:]' <"$l")" in
+          *tctl*|*tdie*|*package*|*cpu*)
+            f="${l/_label/_input}"
+            v=$(_read_temp_file "$f") && { print -r -- "$v"; return 0; }
+        esac
+      done
+      f="$h/temp1_input"
+      v=$(_read_temp_file "$f") && { print -r -- "$v"; return 0; }
+    done
+    if command -v sensors >/dev/null 2>&1; then
+      v=$(sensors 2>/dev/null | awk '/(Tctl|Tdie|Package id 0|CPU)/{match($0,/[0-9]+(\.[0-9])?/,m); if(m[0]!=""){printf "%.0f\n", m[0]; exit}}')
+      [[ -n "$v" ]] && { print -r -- "$v"; return 0; }
+    fi
+    return 1
+  }
+
+  _find_fan() {
+    local best=0 rpm
+    local -a hmons; hmons=( /sys/class/hwmon/hwmon*(N) )
+    local h
+    for h in $hmons; do
+      local -a fans; fans=( "$h"/fan*_input(N) )
+      local f
+      for f in $fans; do
+        rpm=$(<"$f") || continue
+        (( rpm > best )) && best="$rpm"
+      done
+    done
+    if (( best == 0 )) && [[ -r /proc/acpi/ibm/fan ]]; then
+      rpm=$(awk -F': *' '/speed:/{print $2}' /proc/acpi/ibm/fan 2>/dev/null)
+      [[ -n "$rpm" ]] && best="$rpm"
+    fi
+    (( best > 0 )) && { print -r -- "$best"; return 0; }
+    return 1
+  }
+
+  _find_gpu_temp() {
+    local mode="$1" t
+    [[ "$mode" == "off" ]] && return 1
+    if command -v nvidia-smi >/dev/null 2>&1; then
+      t=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -n1)
+      [[ -n "$t" ]] && { print -r -- "$t"; return 0; }
+    fi
+    # AMD paths
+    local -a amds; amds=( /sys/class/hwmon/hwmon*/temp*_input(N) )
+    local f
+    for f in $amds; do
+      if readlink -f "$f" | grep -qi amdgpu; then
+        t=$(_read_temp_file "$f") && { print -r -- "$t"; return 0; }
+      fi
+    done
+    local -a drm; drm=( /sys/class/drm/card*/device/hwmon/hwmon*/temp*_input(N) )
+    for f in $drm; do
+      t=$(_read_temp_file "$f") && { print -r -- "$t"; return 0; }
+    done
+    return 1
+  }
+
+  local cpu gpu fan
+  cpu=$(_find_cpu_temp) || { print -ru2 -- "no temperature source found"; return 1; }
+
+  if (( verbose )); then
+    # include GPU/FAN only when asked
+    [[ "$force_gpu" == "on" ]] && gpu=$(_find_gpu_temp "${HEAT_GPU:-auto}") || gpu=""
+    [[ "$force_fan" == "on" ]] && fan=$(_find_fan) || fan=""
+    local out="CPU ${cpu}°C"
+    [[ -n "$gpu" ]] && out+="  GPU ${gpu}°C"
+    [[ -n "$fan" ]] && out+="  FAN ${fan} rpm"
+    print -r -- "$out"
+  else
+    (( raw )) && print -r -- "$cpu" || print -r -- "${cpu}°C"
+  fi
+}
 
