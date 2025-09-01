@@ -1,12 +1,28 @@
 ashgw() {
+  emulate -L zsh
+  setopt pipefail
+
   local r=$'\e[0m' g=$'\e[1;32m' m=$'\e[1;35m'
+
+  # -------- flags --------
+  local animate=0 anim="scan" frames="${AGFETCH_FRAMES:-48}" speed_ms="${AGFETCH_SPEED_MS:-45}"
+  local opt
+  while getopts ":aA:f:s:" opt; do
+    case $opt in
+      a) animate=1 ;;
+      A) anim="$OPTARG" ;;      # scan | pulse
+      f) [[ "$OPTARG" == <-> ]] && frames="$OPTARG" ;;
+      s) [[ "$OPTARG" == <-> ]] && speed_ms="$OPTARG" ;;
+    esac
+  done
+  shift $((OPTIND - 1))
 
   # ---------- gather ----------
   local os kernel uptime term shell wm pkgs cpu gpu mem disk ip temp
   os=$(command -v lsb_release >/dev/null && lsb_release -ds || grep PRETTY_NAME /etc/os-release | cut -d= -f2- | tr -d '"')
   kernel=$(uname -r)
   uptime=$(uptime -p | sed 's/^up //')
-  term=$( [ -n "$TMUX" ] && echo "tmux" || echo "${TERM:-unknown}" )
+  term=$([ -n "$TMUX" ] && echo tmux || echo "${TERM:-unknown}")
   shell=$(basename "$SHELL")
   wm=${XDG_CURRENT_DESKTOP:-$(wmctrl -m 2>/dev/null | awk -F: '/Name/{gsub(/^ /,"",$2);print $2}')}
   pkgs=$(command -v dpkg >/dev/null && dpkg -l 2>/dev/null | awk 'BEGIN{n=0} /^ii/{n++} END{print n}')
@@ -17,15 +33,15 @@ ashgw() {
   ip=$(ip -brief addr | awk '!/lo/ && $3 ~ /\// {print $1": "$3}' | head -n1)
   temp=$(command -v sensors >/dev/null && sensors 2>/dev/null | awk '/Package id 0|Tctl|Tdie|CPU/ {t=$NF; gsub(/[()]/,"",t); print t; exit}')
 
-  # ---------- logo (fallback if figlet missing) ----------
-  local logo
+  # ---------- logo ----------
+  local -a logo_lines
   if command -v figlet >/dev/null; then
-    logo="$(figlet -f slant "@ashgw")"
+    logo_lines=("${(f)$(figlet -f slant "@ashgw")}")
   else
-    logo="@ashgw  (install 'figlet' for big logo: sudo apt install figlet)"
+    logo_lines=("@ashgw  (install 'figlet' for big logo: sudo apt install figlet)")
   fi
 
-  # ---------- format right column ----------
+  # ---------- right column (split into lines) ----------
   local info
   info="$(printf "%s\n" \
     "${g}OS      ${r}${os}" \
@@ -42,15 +58,71 @@ ashgw() {
     "$( [ -n "$temp" ] && printf "%s" "${g}TEMP    ${r}${temp}" )" \
     "${g}NET     ${r}${ip}" \
   )"
+  local -a info_lines
+  info_lines=("${(f)info}")
 
-  # ---------- side-by-side like neofetch ----------
-  # pad logo to a fixed width so the info lines start aligned
-  local COL=${AGFETCH_COL:-36}
-  paste -d' ' \
-    <(printf "%s\n" "$logo" | awk -v pad="$COL" -v pre="$m" -v suf="$r" '{printf "%s%-"pad"s%s\n",pre,$0,suf}') \
-    <(printf "%s\n" "$info")
+  # ---------- layout ----------
+  local COL=${AGFETCH_COL:-36}              # width reserved for logo column
+  local H=$(( ${#logo_lines[@]} > ${#info_lines[@]} ? ${#logo_lines[@]} : ${#info_lines[@]} ))
+
+  # helpers
+  local rev=$'\e[7m' nor=$'\e[27m'
+  _pad() { printf "%-*s" "$2" "$1"; }                    # _pad "str" width
+  _color_for() { local n=$(( $1 % 6 )); print -n -- $'\e[1;3'$((31+n))'m'; }  # bright 31..36
+
+  _render_frame() {
+    local tick="$1" i ll rr line color start band end left mid right
+    local bandw="${AGFETCH_BAND:-3}"
+    for ((i=1; i<=H; ++i)); do
+      ll="${logo_lines[i]:-}"
+      ll="$(_pad "$ll" "$COL")"
+      rr="${info_lines[i]:-}"
+
+      if (( animate )); then
+        case "$anim" in
+          scan)
+            start=$(( (tick % (COL - bandw + 1)) + 1 ))
+            end=$(( start + bandw - 1 ))
+            (( end > COL )) && end="$COL"
+            left="${ll[1,start-1]}"
+            mid="${ll[start,end]}"
+            right="${ll[end+1,-1]}"
+            line="${m}${left}${rev}${mid}${nor}${right}${r}"
+            ;;
+          pulse)
+            color="$(_color_for $((tick + i)))"
+            line="${color}${ll}${r}"
+            ;;
+          *)
+            line="${m}${ll}${r}"
+            ;;
+        esac
+      else
+        line="${m}${ll}${r}"
+      fi
+
+      printf "%s %s\n" "$line" "$rr"
+    done
+  }
+
+  if (( animate )); then
+    # hide cursor, restore on exit
+    printf '\e[?25l'
+    trap 'printf "\e[?25h"; return 130' INT TERM
+    local f
+    for ((f=0; f<frames; ++f)); do
+      _render_frame "$f"
+      printf "\e[%dA" "$H"
+      sleep "$(printf "0.%03d" "$(( speed_ms ))")"
+    done
+    # final frame without moving cursor up
+    _render_frame "$frames"
+    printf '\e[?25h'
+  else
+    # single render, no animation
+    _render_frame 0
+  fi
 }
-
 diskusage() {
   if ! command -v dua >/dev/null 2>&1; then
     echo -e "\e[1;31m❌ dua not found.\e[0m"
