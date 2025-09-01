@@ -59,6 +59,54 @@ dvolrm(){
   echo "$vols" | xargs -r docker volume rm && _ok "removed selected volumes"
 }
 
+# dgo — fuzzy jump into a container or image
+# deps: docker, fzf
+dgo() {
+  local list pick id kind running imageRef
+
+  list=$(
+    docker ps -a --format '{{.ID}}\tctr\t{{.Status}}\t{{.Image}}\t{{.Names}}'
+    docker images --format '{{.ID}}\timg\t{{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}' \
+      | grep -v '^<none>:' || true
+  )
+  [[ -z "$list" ]] && { echo "no docker resources"; return 1; }
+
+  pick=$(echo "$list" | fzf \
+    --height 70% --border --reverse \
+    --prompt='🐳 dgo ⇢ ' \
+    --delimiter=$'\t' --with-nth=2.. \
+    --header $'enter: attach    ctrl-l: logs    ctrl-r: restart    ctrl-d: remove' \
+    --preview='
+      if [[ {2} = "ctr" ]]; then
+        docker ps -a --filter id={1} --format "ID: {{.ID}}\nIMAGE: {{.Image}}\nNAMES: {{.Names}}\nSTATUS: {{.Status}}\nPORTS: {{.Ports}}"
+      else
+        docker image inspect {1} 2>/dev/null | sed -n "1,60p"
+      fi
+    ' \
+    --bind 'ctrl-l:execute(docker logs --tail 120 {1} | less -R)' \
+    --bind 'ctrl-r:execute-silent([[ {2} = ctr ]] && docker restart {1})+reload(docker ps -a --format "{{.ID}}\tctr\t{{.Status}}\t{{.Image}}\t{{.Names}}"; docker images --format "{{.ID}}\timg\t{{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}" | grep -v "^<none>:")' \
+    --bind 'ctrl-d:execute-silent([[ {2} = ctr ]] && docker rm -f {1} || docker rmi -f {1})+reload(docker ps -a --format "{{.ID}}\tctr\t{{.Status}}\t{{.Image}}\t{{.Names}}"; docker images --format "{{.ID}}\timg\t{{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}" | grep -v "^<none>:")'
+  ) || return
+
+  id=$(awk -F'\t' '{print $1}' <<< "$pick")
+  kind=$(awk -F'\t' '{print $2}' <<< "$pick")
+
+  if [[ "$kind" = "ctr" ]]; then
+    running=$(docker inspect -f '{{.State.Running}}' "$id" 2>/dev/null)
+    [[ "$running" != "true" ]] && docker start "$id" >/dev/null
+    docker exec -it "$id" bash 2>/dev/null || docker exec -it "$id" sh 2>/dev/null || docker exec -it "$id" ash
+  else
+    imageRef="$id"
+    docker run --rm -it --entrypoint="" "$imageRef" bash 2>/dev/null \
+      || docker run --rm -it --entrypoint="" "$imageRef" sh 2>/dev/null \
+      || docker run --rm -it --entrypoint="" "$imageRef" ash
+  fi
+}
+
+# tiny alias to make it stick in muscle memory
+alias dsh='dgo'
+
+
 # copy files out of a container
 dcp(){
   local id=$(_pick_ct) || return 1
@@ -110,3 +158,4 @@ dprune() {
    docker image prune -f
    docker volume prune -f
 }
+
