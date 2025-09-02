@@ -7,3 +7,6 @@ animations() {
   [[ -n "$choice" ]] && eval "$choice"
 }
 
+
+alias clc=clock
+
