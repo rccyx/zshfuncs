@@ -8,5 +8,5 @@ animations() {
 }
 
 
-alias clc=clock
+alias clcl=clock
 
