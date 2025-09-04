@@ -1,4 +1,48 @@
-# stands for "browse", opens  the current repo on GitHub
+# ---------------------------
+# git.zsh — helpers & browse
+# ---------------------------
+
+# internal: prefer 'upstream' if present, else 'origin'
+_git_primary_remote() {
+  if git remote | grep -qx "upstream"; then
+    echo upstream
+  else
+    echo origin
+  fi
+}
+
+# internal: resolve the default base ref:
+# 1) <remote>/HEAD (e.g. origin/main)
+# 2) <remote>/main or <remote>/master
+# 3) local main or master
+# Fallback is to echo nothing and let caller handle.
+_git_default_base_ref() {
+  local remote="${1:-$(_git_primary_remote)}" ref
+  # remote default head, e.g. "origin/main"
+  ref=$(git symbolic-ref -q --short "refs/remotes/${remote}/HEAD" 2>/dev/null)
+  if [[ -n "$ref" ]]; then
+    echo "$ref"; return 0
+  fi
+  if git show-ref --verify --quiet "refs/remotes/${remote}/main"; then
+    echo "${remote}/main"; return 0
+  fi
+  if git show-ref --verify --quiet "refs/remotes/${remote}/master"; then
+    echo "${remote}/master"; return 0
+  fi
+  if git show-ref --verify --quiet "refs/heads/main"; then
+    echo "main"; return 0
+  fi
+  if git show-ref --verify --quiet "refs/heads/master"; then
+    echo "master"; return 0
+  fi
+  return 1
+}
+
+# ---------------------------
+# Browsing helpers
+# ---------------------------
+
+# stands for "browse", opens the current repo on GitHub
 bws() {
   local remote
   remote=$(git config --get remote.origin.url)
@@ -6,7 +50,8 @@ bws() {
   remote=${remote/.git/}
   xdg-open "$remote"
 }
-# PRs
+
+# PRs list
 prs() {
   local remote
   remote=$(git config --get remote.origin.url)
@@ -15,37 +60,26 @@ prs() {
   xdg-open "$remote/pulls"
 }
 
-
 # Open the Pull Request for the current branch (if any)
 prr() {
   emulate -L zsh
   setopt err_return
 
-  # ensure we're in a repo
   if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "Not in a git repo" >&2
     return 1
   fi
 
-  # current branch or short SHA if detached
   local branch
   branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || git rev-parse --short HEAD)
 
-  # fast path with GitHub CLI
   if command -v gh >/dev/null 2>&1; then
     if gh pr view --web >/dev/null 2>&1; then
       return 0
     fi
   fi
 
-  # pick upstream if present, else origin
-  local remote_name="origin"
-  if git remote | grep -qx "upstream"; then
-    remote_name="upstream"
-  fi
-
-  # normalize remote to https and extract owner/repo
-  local remote https slug owner repo
+  local remote_name="$(_git_primary_remote)" remote https slug owner repo
   remote=$(git config --get "remote.${remote_name}.url")
   if [[ -z "$remote" ]]; then
     echo "No ${remote_name} remote found" >&2
@@ -57,7 +91,6 @@ prr() {
   owner=${slug%%/*}
   repo=${slug#*/}
 
-  # try GitHub API to resolve the PR by head ref
   local token resp pr_html api
   token=${GITHUB_TOKEN:-$GH_TOKEN}
   if command -v curl >/dev/null 2>&1; then
@@ -80,7 +113,6 @@ prr() {
     fi
   fi
 
-  # final fallback: open PRs filtered by head branch
   local urlencode search_url
   urlencode() {
     local i ch out="" s="$1"
@@ -97,8 +129,7 @@ prr() {
   xdg-open "$search_url" >/dev/null 2>&1 &
 }
 
-
-# yessir
+# issues list
 issues() {
   local remote
   remote=$(git config --get remote.origin.url)
@@ -106,7 +137,12 @@ issues() {
   remote=${remote/.git/}
   xdg-open "$remote/issues"
 }
-# git checkout on roids
+
+# ---------------------------
+# Branch and history helpers
+# ---------------------------
+
+# checkout with fzf
 gck() {
   local branch
   branch=$(git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short)' \
@@ -115,28 +151,100 @@ gck() {
 }
 compdef _git gck
 
-# git grepper for commits
+# grep commits by added/removed string, preview commit
 ggrep() {
   local q
-  echo -n "🔍 search term: "; read -r q
+  echo -n "search term: "; read -r q
   git log --all --pretty=format:'%C(auto)%h %s %Cgreen(%cr)' -S"$q" |
     fzf --reverse --preview="echo {} | cut -d' ' -f1 | xargs git show --color=always"
 }
+compdef _git ggrep
 
-## g for git, double l is for last, since I already have gl as git log.. in the .gitconfig file.
+# last commit details
 gll() {
-	 git show $(git log -1 --format=%H)
+  git show "$(git log -1 --format=%H)"
 }
 
-gllc(){
-	git diff HEAD~1 HEAD --stat
+# last commit file change stats
+gllc() {
+  git diff HEAD~1 HEAD --stat
 }
 
-#   show top repo contributors fast
+# WHO did what
 gitwho() {
   git -C "${1:-.}" shortlog -sn --no-merges | head | nl -ba
 }
-# generate a GitHub SSH key, add it to the agent, and copy the .pub to clipboard
+
+# root of repo
+groot() {
+  cd "$(git rev-parse --show-toplevel)" || echo "Not in a git repo"
+}
+
+# Danger: delete all local branches except current
+dlb() {
+  git branch | grep -v "$(git rev-parse --abbrev-ref HEAD)" | xargs git branch -D
+}
+
+# ---------------------------
+# Whole-branch diffs (since diverging from base)
+# ---------------------------
+
+# bll  -> list files changed on this branch since it diverged from base
+# usage: bll [<base-ref>]
+# default base: remote default head (origin/main), with fallbacks
+bll() {
+  emulate -L zsh
+  setopt pipefail
+
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Not in a git repo" >&2
+    return 1
+  fi
+
+  local base_ref="${1:-${BLL_BASE:-}}"
+  if [[ -z "$base_ref" ]]; then
+    base_ref="$(_git_default_base_ref "$(_git_primary_remote)")" || true
+  fi
+  if [[ -z "$base_ref" ]]; then
+    echo "Could not determine base branch. Pass one explicitly, e.g. 'bll main'." >&2
+    return 1
+  fi
+
+  # triple-dot = diff against merge-base(base_ref, HEAD)
+  git diff --name-status -M --find-renames "${base_ref}...HEAD"
+}
+
+# bllc -> cumulative diff stats for the whole branch
+# usage: bllc [<base-ref>]
+bllc() {
+  emulate -L zsh
+  setopt pipefail
+
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Not in a git repo" >&2
+    return 1
+  fi
+
+  local base_ref="${1:-${BLL_BASE:-}}"
+  if [[ -z "$base_ref" ]]; then
+    base_ref="$(_git_default_base_ref "$(_git_primary_remote)")" || true
+  fi
+  if [[ -z "$base_ref" ]]; then
+    echo "Could not determine base branch. Pass one explicitly, e.g. 'bllc main'." >&2
+    return 1
+  fi
+
+  git diff --stat -M --find-renames "${base_ref}...HEAD"
+}
+
+# optional simple completion
+compdef _git bll bllc
+
+# ---------------------------
+# SSH key helper for GitHub
+# ---------------------------
+
+# generate a GitHub SSH key, add to agent, copy .pub to clipboard
 # usage: ghkey [-f] [-c comment] [path]
 # defaults: path=$HOME/.ssh/github, comment="$(whoami)@$(hostname)"
 ghkey() {
@@ -146,8 +254,8 @@ ghkey() {
   local force=0 comment="$(whoami)@$(hostname)" opt
   while getopts "fc:" opt; do
     case "$opt" in
-      f) force=1 ;;         # overwrite existing key without prompting
-      c) comment="$OPTARG" ;;# set key comment
+      f) force=1 ;;
+      c) comment="$OPTARG" ;;
     esac
   done
   shift $((OPTIND - 1))
@@ -163,7 +271,7 @@ ghkey() {
     echo "Key exists at $key"
     read -q "REPLY?Reuse it? [Y/n] "; echo
     if [[ "$REPLY" == [Nn] ]]; then
-      echo "Aborted. Use: ghkey -f  to overwrite."
+      echo "Aborted. Use: ghkey -f to overwrite."
       return 1
     fi
   fi
@@ -173,13 +281,11 @@ ghkey() {
     chmod 600 "$key" 2>/dev/null || true
   fi
 
-  # ensure an ssh-agent is running
   if ! ssh-add -l >/dev/null 2>&1; then
     eval "$(ssh-agent -s)" >/dev/null 2>&1
   fi
   ssh-add -q "$key" || { echo "ssh-add failed"; return 1; }
 
-  # write minimal config for GitHub if not present
   if [[ ! -f "$cfg" ]] || ! grep -q "IdentityFile $key" "$cfg"; then
     {
       echo "Host github.com"
@@ -191,7 +297,6 @@ ghkey() {
     chmod 600 "$cfg" 2>/dev/null || true
   fi
 
-  # copy pub key to clipboard using your ops.zsh if available, else fall back
   if typeset -f _clip >/dev/null; then
     < "$pub" _clip || { echo "clipboard copy failed"; return 1; }
   elif typeset -f copy >/dev/null; then
@@ -212,18 +317,4 @@ ghkey() {
   echo "Done. Public key is in your clipboard. Add it in GitHub -> Settings -> SSH and GPG keys."
   echo "Test when ready: ssh -T git@github.com"
 }
-
-
-
-# go into the root of the current git dir
-groot() {
-  cd "$(git rev-parse --show-toplevel)" || echo "Not in a git repo"
-}
-
-# USE WITH CAUTION: DELETES ALL THE GIT BRANCHES EXCEPT FOR THE ONE YOU'RE ON RN
-dlb() {
- git branch | grep -v "$(git rev-parse --abbrev-ref HEAD)" | xargs git branch -D
-}
-
-compdef _git ggrep
 
