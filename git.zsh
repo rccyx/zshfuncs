@@ -15,6 +15,89 @@ prs() {
   xdg-open "$remote/pulls"
 }
 
+
+# Open the Pull Request for the current branch (if any)
+prr() {
+  emulate -L zsh
+  setopt err_return
+
+  # ensure we're in a repo
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Not in a git repo" >&2
+    return 1
+  fi
+
+  # current branch or short SHA if detached
+  local branch
+  branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || git rev-parse --short HEAD)
+
+  # fast path with GitHub CLI
+  if command -v gh >/dev/null 2>&1; then
+    if gh pr view --web >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  # pick upstream if present, else origin
+  local remote_name="origin"
+  if git remote | grep -qx "upstream"; then
+    remote_name="upstream"
+  fi
+
+  # normalize remote to https and extract owner/repo
+  local remote https slug owner repo
+  remote=$(git config --get "remote.${remote_name}.url")
+  if [[ -z "$remote" ]]; then
+    echo "No ${remote_name} remote found" >&2
+    return 1
+  fi
+  https=${remote/git@github.com:/https://github.com/}
+  https=${https/.git/}
+  slug=${https#https://github.com/}
+  owner=${slug%%/*}
+  repo=${slug#*/}
+
+  # try GitHub API to resolve the PR by head ref
+  local token resp pr_html api
+  token=${GITHUB_TOKEN:-$GH_TOKEN}
+  if command -v curl >/dev/null 2>&1; then
+    api="https://api.github.com/repos/${owner}/${repo}/pulls?head=${owner}:${branch}&state=open&per_page=1"
+    if [[ -n "$token" ]]; then
+      resp=$(curl -fsSL -H "Authorization: token ${token}" -H "Accept: application/vnd.github+json" "$api" 2>/dev/null) || resp=""
+    else
+      resp=$(curl -fsSL -H "Accept: application/vnd.github+json" "$api" 2>/dev/null) || resp=""
+    fi
+    if [[ -n "$resp" ]]; then
+      if command -v jq >/dev/null 2>&1; then
+        pr_html=$(printf "%s" "$resp" | jq -r '.[0].html_url // empty')
+      else
+        pr_html=$(printf "%s" "$resp" | sed -n 's/.*"html_url": *"\([^"]*\)".*/\1/p' | head -n1)
+      fi
+      if [[ -n "$pr_html" ]]; then
+        xdg-open "$pr_html" >/dev/null 2>&1 &
+        return 0
+      fi
+    fi
+  fi
+
+  # final fallback: open PRs filtered by head branch
+  local urlencode search_url
+  urlencode() {
+    local i ch out="" s="$1"
+    for ((i=1; i<=${#s}; i++)); do
+      ch="${s[i]}"
+      case "$ch" in
+        [a-zA-Z0-9.~_-]) out+="$ch" ;;
+        *) out+=$(printf '%%%02X' "'$ch") ;;
+      esac
+    done
+    print -r -- "$out"
+  }
+  search_url="${https}/pulls?q=is%3Apr+is%3Aopen+head%3A$(urlencode "$branch")"
+  xdg-open "$search_url" >/dev/null 2>&1 &
+}
+
+
 # yessir
 issues() {
   local remote
