@@ -289,51 +289,123 @@ bllc() {
   git diff --stat --color "$range"
 }
 
-# mpr -> create a PR for the current branch (draft by default)
-# Usage:
-#   mpr                         # draft PR, auto base (upstream/main → origin/main fallback)
-#   mpr -R                      # ready PR (not draft)
-#   mpr -B main                 # set base branch
-#   mpr -t "Title"              # set PR title (body from commits)
-#   mpr -t "Title" -b "Body"    # set both title and body
-#   mpr -F                      # use --fill-verbose for body
-#   mpr -n                      # do not open browser after creation
+# -----------------------------------------------------------------------------
+# mpr helper
+# -----------------------------------------------------------------------------
+_mpr_help() {
+  cat <<'EOF'
+mpr - GitHub PR helper
+
+Synopsis
+  mpr                     Show this help
+  mpr create [opts]       Create a PR for the current branch
+  mpr open                Open the PR for the current branch in the browser
+  mpr view                Show PR details in the terminal
+  mpr ready               Mark the PR ready for review
+
+Options for `mpr create`
+  -R                      Ready for review. Default is draft.
+  -B <base>               Base branch. Auto-detected if omitted.
+  -t "<title>"            PR title. If body is omitted, commits are used.
+  -b "<body>"             PR body.
+  -F                      Use --fill-verbose when body is omitted.
+  -n                      Do not open the browser after creation.
+  -h, --help              Show this help.
+
+Defaults
+  - Base is detected from upstream/main or origin/main, then master.
+  - If upstream exists, target upstream and push head to origin.
+  - If body is missing, commit messages fill it.
+
+Env
+  GITHUB_TOKEN or GH_TOKEN for API calls.
+  BLL_BASE to force the base ref.
+
+Examples
+  mpr create -t "feat: upload assets" -R
+  mpr create -B main -F
+  mpr open
+EOF
+}
+
+# -----------------------------------------------------------------------------
+# mpr - PR utility
+# -----------------------------------------------------------------------------
 mpr() {
   emulate -L zsh
   setopt err_return pipefail
 
+  # Show help if no args or explicit help
+  if [[ $# -eq 0 || "$1" == "help" || "$1" == "-h" || "$1" == "--help" ]]; then
+    _mpr_help
+    return 0
+  fi
+
   command -v gh >/dev/null 2>&1 || { echo "gh CLI not found"; return 1; }
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "Not in a git repo"; return 1; }
 
-  # opts
+  # Small subcommands
+  case "$1" in
+    open)
+      shift
+      gh pr view --web >/dev/null 2>&1 || gh pr list --web
+      return $?
+      ;;
+    view)
+      shift
+      gh pr view || { echo "No PR found for this branch"; return 1; }
+      return $?
+      ;;
+    ready)
+      shift
+      gh pr ready || { echo "No draft PR found for this branch"; return 1; }
+      return $?
+      ;;
+    create)
+      shift
+      ;;
+    *)
+      # Unknown token, assume user wants create with flags
+      :
+      ;;
+  esac
+
+  # Parse create flags
   local draft=1 base="" title="" body="" open_after=1 fill_verbose=0 opt
-  while getopts ":RB:t:b:nF" opt; do
+  while getopts ":RB:t:b:nFh-" opt; do
     case "$opt" in
-      R) draft=0 ;;             # ready for review
-      B) base="$OPTARG" ;;      # base branch (matches gh -B)
-      t) title="$OPTARG" ;;     # PR title
-      b) body="$OPTARG" ;;      # PR body
-      n) open_after=0 ;;        # don't open browser
-      F) fill_verbose=1 ;;      # use --fill-verbose
+      R) draft=0 ;;
+      B) base="$OPTARG" ;;
+      t) title="$OPTARG" ;;
+      b) body="$OPTARG" ;;
+      n) open_after=0 ;;
+      F) fill_verbose=1 ;;
+      h) _mpr_help; return 0 ;;
+      -) case "$OPTARG" in
+           help) _mpr_help; return 0 ;;
+           *) ;; # ignore unknown long flags
+         esac ;;
+      \?) echo "Unknown option: -$OPTARG"; _mpr_help; return 1 ;;
+      :)  echo "Missing value for -$OPTARG"; _mpr_help; return 1 ;;
     esac
   done
   shift $((OPTIND - 1))
 
-  # current branch (fail on detached)
+  # Current branch
   local branch
   branch=$(git symbolic-ref --quiet --short HEAD) || { echo "Detached HEAD"; return 1; }
 
-  # identify remotes
+  # Remotes: base from upstream if present, head pushed to origin
   local base_remote push_remote
   if git remote | grep -qx "upstream"; then
-    base_remote="upstream"   # PR targets upstream if present
-    push_remote="origin"     # and head branch is on origin
+    base_remote="upstream"
+    push_remote="origin"
   else
     base_remote="origin"
     push_remote="origin"
   fi
 
-  # compute base branch if not provided
+  # Compute base branch when not provided
   if [[ -z "$base" ]]; then
     local base_ref
     base_ref="$(_git_default_base_ref "$base_remote" 2>/dev/null || echo main)"
@@ -344,8 +416,8 @@ mpr() {
   fi
   [[ "$branch" == "$base" ]] && { echo "You are on '$branch'. Switch to a feature branch."; return 1; }
 
-  # resolve owner/repo slugs
-  local base_url base_https base_slug head_url head_https head_slug head_owner
+  # Resolve slugs
+  local base_url head_url base_https head_https base_slug head_slug head_owner
   base_url=$(git config --get "remote.${base_remote}.url")
   head_url=$(git config --get "remote.${push_remote}.url")
   [[ -z "$base_url" || -z "$head_url" ]] && { echo "Missing git remotes"; return 1; }
@@ -355,8 +427,7 @@ mpr() {
   head_slug=${head_https#https://github.com/}
   head_owner=${head_slug%%/*}
 
-  # reuse existing open PR if any
-  # gh pr view detects PR for current branch even in fork setups
+  # Reuse existing open PR if any
   local existing_url
   existing_url=$(gh pr view --json url -q .url 2>/dev/null || true)
   if [[ -n "$existing_url" ]]; then
@@ -365,29 +436,37 @@ mpr() {
     return 0
   fi
 
-  # ensure branch is pushed
+  # Ensure branch is pushed
   git push -u "$push_remote" HEAD >/dev/null 2>&1 || git push -u "$push_remote" HEAD || {
     echo "Failed to push branch to '$push_remote'."; return 1; }
 
-  # build gh args
+  # Build gh args
   local args=(pr create --repo "$base_slug" --base "$base" --head "${head_owner}:${branch}")
   (( draft )) && args+=(--draft)
-  if [[ -n "$title" ]]; then
-    args+=(--title "$title")
-  fi
+  [[ -n "$title" ]] && args+=(--title "$title")
   if [[ -n "$body" ]]; then
     args+=(--body "$body")
   else
-    # No body provided: satisfy non-interactive requirement by autofilling from commits
-    (( fill_verbose )) && args+=(--fill-verbose) || args+=(--fill)
+    if (( fill_verbose )); then
+      args+=(--fill-verbose)
+    else
+      args+=(--fill)
+    fi
   fi
 
-  # create PR
+  # Create PR, retry once if gh complains about missing body
   local out pr_url
   if ! out=$(gh "${args[@]}" 2>&1); then
-    echo "$out" >&2
-    return 1
+    if [[ "$out" == *"must provide --title and --body"* ]]; then
+      # Force-fill body and retry
+      args+=("--fill-verbose")
+      out=$(gh "${args[@]}" 2>&1) || { echo "$out" >&2; return 1; }
+    else
+      echo "$out" >&2
+      return 1
+    fi
   fi
+
   pr_url=$(print -r -- "$out" | awk '/^https?:\/\//{print; exit}')
   if [[ -n "$pr_url" ]]; then
     echo "Created PR: $pr_url"
