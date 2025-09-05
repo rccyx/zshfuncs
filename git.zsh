@@ -289,3 +289,111 @@ bllc() {
   git diff --stat --color "$range"
 }
 
+# mpr -> create a PR for the current branch (draft by default)
+# Usage:
+#   mpr                         # draft PR, auto base (upstream/main → origin/main fallback)
+#   mpr -R                      # ready PR (not draft)
+#   mpr -B main                 # set base branch
+#   mpr -t "Title"              # set PR title (body from commits)
+#   mpr -t "Title" -b "Body"    # set both title and body
+#   mpr -F                      # use --fill-verbose for body
+#   mpr -n                      # do not open browser after creation
+mpr() {
+  emulate -L zsh
+  setopt err_return pipefail
+
+  command -v gh >/dev/null 2>&1 || { echo "gh CLI not found"; return 1; }
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "Not in a git repo"; return 1; }
+
+  # opts
+  local draft=1 base="" title="" body="" open_after=1 fill_verbose=0 opt
+  while getopts ":RB:t:b:nF" opt; do
+    case "$opt" in
+      R) draft=0 ;;             # ready for review
+      B) base="$OPTARG" ;;      # base branch (matches gh -B)
+      t) title="$OPTARG" ;;     # PR title
+      b) body="$OPTARG" ;;      # PR body
+      n) open_after=0 ;;        # don't open browser
+      F) fill_verbose=1 ;;      # use --fill-verbose
+    esac
+  done
+  shift $((OPTIND - 1))
+
+  # current branch (fail on detached)
+  local branch
+  branch=$(git symbolic-ref --quiet --short HEAD) || { echo "Detached HEAD"; return 1; }
+
+  # identify remotes
+  local base_remote push_remote
+  if git remote | grep -qx "upstream"; then
+    base_remote="upstream"   # PR targets upstream if present
+    push_remote="origin"     # and head branch is on origin
+  else
+    base_remote="origin"
+    push_remote="origin"
+  fi
+
+  # compute base branch if not provided
+  if [[ -z "$base" ]]; then
+    local base_ref
+    base_ref="$(_git_default_base_ref "$base_remote" 2>/dev/null || echo main)"
+    base="${base_ref#refs/heads/}"
+    base="${base#refs/remotes/}"
+    base="${base#origin/}"
+    base="${base#upstream/}"
+  fi
+  [[ "$branch" == "$base" ]] && { echo "You are on '$branch'. Switch to a feature branch."; return 1; }
+
+  # resolve owner/repo slugs
+  local base_url base_https base_slug head_url head_https head_slug head_owner
+  base_url=$(git config --get "remote.${base_remote}.url")
+  head_url=$(git config --get "remote.${push_remote}.url")
+  [[ -z "$base_url" || -z "$head_url" ]] && { echo "Missing git remotes"; return 1; }
+  base_https=${base_url/git@github.com:/https://github.com/}; base_https=${base_https/.git/}
+  head_https=${head_url/git@github.com:/https://github.com/}; head_https=${head_https/.git/}
+  base_slug=${base_https#https://github.com/}
+  head_slug=${head_https#https://github.com/}
+  head_owner=${head_slug%%/*}
+
+  # reuse existing open PR if any
+  # gh pr view detects PR for current branch even in fork setups
+  local existing_url
+  existing_url=$(gh pr view --json url -q .url 2>/dev/null || true)
+  if [[ -n "$existing_url" ]]; then
+    echo "PR already exists: $existing_url"
+    (( open_after )) && gh pr view --web >/dev/null 2>&1
+    return 0
+  fi
+
+  # ensure branch is pushed
+  git push -u "$push_remote" HEAD >/dev/null 2>&1 || git push -u "$push_remote" HEAD || {
+    echo "Failed to push branch to '$push_remote'."; return 1; }
+
+  # build gh args
+  local args=(pr create --repo "$base_slug" --base "$base" --head "${head_owner}:${branch}")
+  (( draft )) && args+=(--draft)
+  if [[ -n "$title" ]]; then
+    args+=(--title "$title")
+  fi
+  if [[ -n "$body" ]]; then
+    args+=(--body "$body")
+  else
+    # No body provided: satisfy non-interactive requirement by autofilling from commits
+    (( fill_verbose )) && args+=(--fill-verbose) || args+=(--fill)
+  fi
+
+  # create PR
+  local out pr_url
+  if ! out=$(gh "${args[@]}" 2>&1); then
+    echo "$out" >&2
+    return 1
+  fi
+  pr_url=$(print -r -- "$out" | awk '/^https?:\/\//{print; exit}')
+  if [[ -n "$pr_url" ]]; then
+    echo "Created PR: $pr_url"
+    (( open_after )) && gh pr view --web >/dev/null 2>&1
+  else
+    echo "$out"
+  fi
+}
+
