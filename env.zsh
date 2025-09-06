@@ -1,5 +1,5 @@
-# loadEnv: fuzzy-pick .env files and export them safely
-loadEnv() {
+# le: fuzzy-pick .env files and export them safely
+le() {
   emulate -L zsh
   setopt localoptions pipefail extendedglob typesetsilent no_bang_hist no_nomatch
 
@@ -166,7 +166,4 @@ _loadEnv() {
     '*:directory:_files -/'
 }
 compdef _loadEnv loadEnv
-
-# Optional quick alias
-alias le='loadEnv'
 
