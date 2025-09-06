@@ -145,8 +145,7 @@ storage(){
   sudo ncdu / --exclude /proc --exclude /sys
 }
 
-
-# Suspend the system (sleep)
+# Sleep basically 
 suspend() {
   if command -v systemctl >/dev/null 2>&1; then
     systemctl suspend
@@ -158,7 +157,6 @@ suspend() {
   fi
 }
 
-# Hibernate the system
 hibernate() {
   if command -v systemctl >/dev/null 2>&1; then
     systemctl hibernate
@@ -189,7 +187,6 @@ psf() {
   fi
 }
 
-# heat: minimal, fast, quiet
 # default → "59°C"
 # flags:
 #   -r    raw number only, e.g. "59"
