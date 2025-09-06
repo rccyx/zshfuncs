@@ -3,7 +3,6 @@
 # snaps, flatpaks, pip/pipx, npm/pnpm, cargo, rustup, go, nix, brew,
 # and GNOME keybindings only if GNOME is running.
 # Writes: restore.sh inside $backup_dir
-# No APT sources, no keyrings.
 # ========================================================
 
 # --- msg helpers (safe defaults) ---
@@ -18,10 +17,8 @@ _is_gnome_active() {
   return 1
 }
 
-# Single entrypoint you asked for
-sync() { syncall; }
 
-syncall() {
+sync() {
   setopt local_options err_return pipe_fail
 
   local dotdir="${DOTFILES_DIR:-$HOME/personal/projects/dotfiles}"
