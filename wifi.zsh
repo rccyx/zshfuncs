@@ -215,8 +215,71 @@ device_deep(){
   fi
 }
 
+# ---------- helpers (fallbacks if you do not have them) ----------
+typeset -f _ok   >/dev/null || _ok(){   echo -e "\e[1;32m$*\e[0m"; }
+typeset -f _err  >/dev/null || _err(){  echo -e "\e[1;31m$*\e[0m" >&2; }
+typeset -f _note >/dev/null || _note(){ echo -e "\e[1;34m$*\e[0m"; }
+
+# Detect active wifi/ether interface if not given
+net_iface(){ nmcli device | awk '/wifi|wl|ethernet|enp|eth/ {print $1; exit}'; }
+
+# ---------- ensure deps ----------
+devices_install(){
+  local need=()
+  for bin in arp-scan nmap nbtscan fping jq column avahi-browse mdns-scan upnpc; do
+    command -v "$bin" >/dev/null || need+=("$bin")
+  done
+
+  local pkgs=()
+  for b in "${need[@]}"; do
+    case "$b" in
+      arp-scan)       pkgs+=(arp-scan) ;;
+      nmap)           pkgs+=(nmap) ;;
+      nbtscan)        pkgs+=(nbtscan) ;;
+      fping)          pkgs+=(fping) ;;
+      jq)             pkgs+=(jq) ;;
+      column)         pkgs+=(util-linux) ;;   # column is in util-linux on Debian
+      avahi-browse)   pkgs+=(avahi-utils) ;;
+      mdns-scan)      pkgs+=(mdns-scan) ;;
+      upnpc)          pkgs+=(miniupnpc) ;;
+    esac
+  done
+
+  (( ${#pkgs[@]} )) || return 0
+
+  _note "Installing: ${pkgs[*]}"
+
+  # Try normal update, then fall back to Debian-only lists if third-party repo breaks
+  if ! sudo apt-get update -y; then
+    _err "apt update failed, retrying with Debian sources only"
+    if ! sudo apt-get update -y -o Dir::Etc::sourceparts='-' -o Dir::Etc::sourcelist='/etc/apt/sources.list'; then
+      _err "apt update still failing. Skipping install. Some features may be degraded."
+      return 0
+    fi
+  fi
+
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkgs[@]}" || \
+    _err "Install failed. Continuing without optional tools."
+}
+
+# ---------- quick deep scan of a single host ----------
+device_deep(){
+  local ip="${1:?usage: device_deep <ip> [fast|full]}"
+  local mode="${2:-fast}"
+  _note "Deep scan on $ip ($mode)"
+  if [[ "$mode" == "full" ]]; then
+    sudo nmap -A -T4 --reason --max-retries 2 "$ip"
+  else
+    sudo nmap -A -T4 --reason --host-timeout 25s --max-retries 1 "$ip"
+  fi
+  echo
+  if command -v avahi-resolve-address >/dev/null; then
+    avahi-resolve-address "$ip" || true
+  fi
+}
+
 # ---------- rich devices inventory ----------
-# Usage: devices [--iface IFACE] [--ports "22,80,443,139,445,1900,5357"] [--os] [--deep ip]
+# Usage: devices [--iface IFACE] [--ports "22,80,443,..."] [--os] [--deep ip]
 devices(){
   local iface cidr ports osflag deep_ip
   ports="22,53,80,443,139,445,1900,5357,8000-8100"
@@ -243,51 +306,65 @@ devices(){
   _note "Interface: $iface   Subnet: $cidr"
   local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
-  # 1) ARP sweep for MAC + Vendor
+  # 1) ARP sweep for MAC + Vendor, IPv4 only, tolerate failure
   _note "ARP sweeping..."
-  sudo arp-scan --interface="$iface" --localnet --retry=2 --timeout=50 \
-    | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[ \t]+([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}/{
-        ip=$1; mac=$2; $1=""; $2=""; sub(/^[ \t]+/,""); vendor=$0; print ip"\t"mac"\t"vendor
-      }' > "$tmp/arp.tsv"
+  if ! sudo arp-scan --interface="$iface" --localnet --retry=2 --timeout=50 2>"$tmp/arp.err" \
+      | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[ \t]+([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}/{
+          ip=$1; mac=$2; $1=""; $2=""; sub(/^[ \t]+/,""); vendor=$0; print ip"\t"mac"\t"vendor
+        }' > "$tmp/arp.tsv"
+  then
+    _err "arp-scan failed, falling back to neighbor table"
+    : > "$tmp/arp.tsv"
+  fi
 
-  # also include neighbors we already talked to
-  ip neigh show dev "$iface" | awk '/lladdr/{print $1"\t"$5"\tunknown"}' >> "$tmp/arp.tsv"
+  # Add kernel neighbors, filter to IPv4 only
+  ip neigh show dev "$iface" \
+    | awk '/lladdr/ && $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print $1"\t"$5"\tunknown"}' \
+    >> "$tmp/arp.tsv"
   sort -u "$tmp/arp.tsv" -o "$tmp/arp.tsv"
 
-  cut -f1 "$tmp/arp.tsv" > "$tmp/ips"
-
-  # 2) Fast ping scan + reverse DNS
+  # 2) Alive hosts and reverse DNS (IPv4 subnet)
   _note "Ping probing and reverse DNS..."
   nmap -sn -R "$cidr" -oG - \
     | awk '/Status: Up/{ip=$2; if(match($0,/\(([^)]*)\)/,m)){name=m[1]} else {name="-"}; print ip"\t"name}' \
     > "$tmp/dns.tsv"
 
-  # 3) NetBIOS names if any (Windows, Samba)
+  # 3) NetBIOS names if available
   _note "NetBIOS sweep..."
-  nbtscan -r "$cidr" 2>/dev/null \
-    | awk 'NF>=2 {print $1"\t"$2}' > "$tmp/nb.tsv" || true
+  if command -v nbtscan >/dev/null; then
+    nbtscan -r "$cidr" 2>/dev/null | awk 'NF>=2 {print $1"\t"$2}' > "$tmp/nb.tsv" || true
+  else
+    : > "$tmp/nb.tsv"
+  fi
+
+  # Build the union IP list (IPv4 only)
+  : > "$tmp/ips"
+  awk -F'\t' '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/{print $1}' "$tmp/arp.tsv" >> "$tmp/ips"
+  awk -F'\t' '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/{print $1}' "$tmp/dns.tsv" >> "$tmp/ips"
+  ip neigh show dev "$iface" | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/{print $1}' >> "$tmp/ips"
+  sort -u "$tmp/ips" -o "$tmp/ips"
 
   # 4) Quick port scan for service hints
   _note "Port scan (open only) on discovered IPs..."
-  nmap -Pn -n --open -T4 -p "$ports" -oG - -iL "$tmp/ips" \
-    | awk '/Ports:/{ip=$2; p=$0; sub(/^.*Ports: /,"",p); gsub(/\/open\/tcp\/\/[^,]*/,"",p); gsub(/, /,",",p); print ip"\t"p}' \
-    > "$tmp/ports.tsv"
+  if [[ -s "$tmp/ips" ]]; then
+    nmap -Pn -n --open -T4 -p "$ports" -oG - -iL "$tmp/ips" \
+      | awk '/Ports:/{ip=$2; p=$0; sub(/^.*Ports: /,"",p); gsub(/\/open\/tcp\/\/[^,]*/,"",p); gsub(/, /,",",p); print ip"\t"p}' \
+      > "$tmp/ports.tsv"
+  else
+    : > "$tmp/ports.tsv"
+  fi
 
-  # 5) RTTs
+  # 5) RTTs without background jobs noise
   _note "Measuring RTT..."
   : > "$tmp/rtt.tsv"
   while read -r ip; do
-    (
-      t=$(ping -n -c1 -W1 "$ip" 2>/dev/null | awk -F'time=' '/time=/{print $2}' | cut -d' ' -f1)
-      [[ -z "$t" ]] && t="timeout"
-      echo -e "$ip\t$t"
-    ) &
-  done < "$tmp/ips"
-  wait
+    t=$(ping -n -c1 -W1 "$ip" 2>/dev/null | awk -F'time=' '/time=/{print $2}' | cut -d' ' -f1)
+    printf "%s\t%s\n" "$ip" "${t:-timeout}"
+  done < "$tmp/ips" > "$tmp/rtt.tsv"
 
-  # 6) Optional OS fingerprinting (coarse, limited)
+  # 6) Optional OS fingerprinting
   if (( osflag == 1 )); then
-    _note "OS fingerprinting (coarse, limited)..."
+    _note "OS fingerprinting..."
     sudo nmap -O --osscan-limit --host-timeout 20s -oG - -iL "$tmp/ips" \
       | awk '/Status: Up/ {ip=$2} /OS details:/{sub(/^OS details: /,""); print ip"\t"$0}' \
       > "$tmp/os.tsv"
@@ -295,7 +372,7 @@ devices(){
     : > "$tmp/os.tsv"
   fi
 
-  # 7) Join everything by IP and print pretty
+  # 7) Join everything by IP and print
   _note "Aggregating..."
   typeset -A MAC VENDOR DNS NB PORTS RTT OS
   while IFS=$'\t' read -r ip mac vendor; do MAC[$ip]="$mac"; VENDOR[$ip]="$vendor"; done < "$tmp/arp.tsv"
@@ -307,7 +384,7 @@ devices(){
 
   {
     echo -e "IP\tRTT(ms)\tMAC\tVendor\tDNS-name\tNB-name\tOpen-ports\tOS"
-    for ip in "${(@kon)MAC}"; do
+    for ip in ${(u)${(f)"$(cat "$tmp/ips")"}}; do
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
         "$ip" \
         "${RTT[$ip]:-timeout}" \
@@ -321,7 +398,6 @@ devices(){
     | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n
   } | column -t -s $'\t'
 
-  # Optional deep dive
   if [[ -n "$deep_ip" ]]; then
     echo
     device_deep "$deep_ip" fast
@@ -330,11 +406,12 @@ devices(){
 
 connected-devices(){
   _note "Scanning for connected devices on your network..."
-  devices
+  devices "$@"
   echo
+  local ni; ni="$(net_iface)"
   local count
-  count=$(sudo arp-scan --localnet --interface "$(net_iface)" 2>/dev/null \
-          | grep -cE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[[:space:]]+([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}')
+  count=$(sudo arp-scan --localnet --interface "$ni" 2>/dev/null \
+          | grep -cE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[[:space:]]+([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}') || count=0
   echo "Total devices seen: $count"
 }
 
