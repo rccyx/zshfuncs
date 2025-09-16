@@ -1,7 +1,7 @@
 # reminder.zsh
 # Remote Reminder via API
 # Usage:
-#   reminder                          # fzf picker -> prompt for message
+#   reminder                          # fzf picker -> prompt for message & optional title
 #   reminder --minutes 5 --message "stretch"
 #   reminder 10 "check oven"          # positional
 #   reminder -m 3 -M "grab food" -T "Urgent"
@@ -19,16 +19,16 @@ reminder() {
   local ENDPOINT="https://ashgw.me/api/v1/reminder"
 
   # --- Parse CLI args ---
-  local cli_minutes="" cli_msg="" cli_title="Reminder Notification"
+  local cli_minutes="" cli_msg="" cli_title=""
   while (( $# )); do
     case "$1" in
       --minutes|-m) shift; cli_minutes="${1:-}"; shift || true ;;
       --message|-M) shift; cli_msg="${1:-}"; shift || true ;;
-      --title|-T) shift; cli_title="${1:-Reminder Notification}"; shift || true ;;
+      --title|-T) shift; cli_title="${1:-}"; shift || true ;;
       --help|-h)
         cat <<'__H__'
 reminder:
-  reminder                 -> pick delay with fzf, then enter message
+  reminder                 -> pick delay with fzf, then enter message & optional title
   reminder -m 3 -M "grab food"
   reminder 45 "drink water"
   reminder -m 10 -M "urgent check" -T "Urgent"
@@ -36,7 +36,7 @@ reminder:
 Rules:
   - Exact minutes supported for 0..30
   - > 30 minutes rounds up to nearest 15
-  - Title is optional (defaults to "Reminder Notification")
+  - Title is optional (defaults to "Reminder Notification" if left blank)
 __H__
         return 0
         ;;
@@ -104,12 +104,21 @@ __H__
     [[ -z "$msg" ]] && msg="Time to focus"
   fi
 
+  # --- Title (optional prompt) ---
+  local title
+  if [[ -n "${cli_title:-}" ]]; then
+    title="$cli_title"
+  else
+    vared -p "Reminder title (leave blank for default): " -c title
+    [[ -z "$title" ]] && title="Reminder Notification"
+  fi
+
   # --- Build JSON payload ---
   local payload
   payload=$(jq -nc \
     --arg unit "minutes" \
     --argjson value "$mins" \
-    --arg title "$cli_title" \
+    --arg title "$title" \
     --arg message "$msg" \
     '{
       schedule: {
