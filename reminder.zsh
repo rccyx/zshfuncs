@@ -11,8 +11,8 @@ reminder() {
   setopt localoptions errexit nounset pipefail
 
   # --- Check API token ---
-  if [[ -z "${X_API_TOKEN:-}" ]]; then
-    print "❌ X_API_TOKEN not set in environment. Export it first."
+  if [[ -z "${ASHGW_REMINDER_API_TOKEN:-}" ]]; then
+    print "❌ ASHGW_REMINDER_API_TOKEN not set in environment. Export it first."
     return 1
   fi
 
@@ -147,7 +147,7 @@ __H__
   local resp
   resp=$(curl -sS -X POST "$ENDPOINT" \
     -H "Content-Type: application/json" \
-    -H "X-API-TOKEN: $X_API_TOKEN" \
+    -H "X-API-TOKEN: $ASHGW_REMINDER_API_TOKEN" \
     -d "$payload")
 
   # --- Log result ---
