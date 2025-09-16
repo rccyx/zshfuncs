@@ -1,10 +1,10 @@
 # reminder.zsh
 # Remote Reminder via API
+# Supports units: seconds, minutes, hours, days
 # Usage:
-#   reminder                          # fzf picker -> prompt for message & optional title
-#   reminder --minutes 5 --message "stretch"
-#   reminder 10 "check oven"          # positional
-#   reminder -m 3 -M "grab food" -T "Urgent"
+#   reminder                          # fzf picker -> unit + value + message + title
+#   reminder --unit minutes --value 5 --message "stretch"
+#   reminder --unit hours --value 2 --message "check oven" -T "Urgent"
 
 reminder() {
   emulate -L zsh
@@ -19,23 +19,23 @@ reminder() {
   local ENDPOINT="https://ashgw.me/api/v1/reminder"
 
   # --- Parse CLI args ---
-  local cli_minutes="" cli_msg="" cli_title=""
+  local cli_unit="" cli_value="" cli_msg="" cli_title=""
   while (( $# )); do
     case "$1" in
-      --minutes|-m) shift; cli_minutes="${1:-}"; shift || true ;;
+      --unit|-u) shift; cli_unit="${1:-}"; shift || true ;;
+      --value|-v) shift; cli_value="${1:-}"; shift || true ;;
       --message|-M) shift; cli_msg="${1:-}"; shift || true ;;
       --title|-T) shift; cli_title="${1:-}"; shift || true ;;
       --help|-h)
         cat <<'__H__'
 reminder:
-  reminder                 -> pick delay with fzf, then enter message & optional title
-  reminder -m 3 -M "grab food"
-  reminder 45 "drink water"
-  reminder -m 10 -M "urgent check" -T "Urgent"
+  reminder                 -> pick unit + value with fzf, then enter message & optional title
+  reminder -u minutes -v 5 -M "grab food"
+  reminder -u hours -v 2 -M "drink water"
+  reminder -u days -v 1 -M "check inbox" -T "Urgent"
 
 Rules:
-  - Exact minutes supported for 0..30
-  - > 30 minutes rounds up to nearest 15
+  - Units supported: seconds (0-60), minutes (0-60), hours (0-24), days (0-7)
   - Title is optional (defaults to "Reminder Notification" if left blank)
 __H__
         return 0
@@ -43,10 +43,8 @@ __H__
       '')
         shift ;;
       *)
-        if [[ -z "$cli_minutes" && "$1" == <-> ]]; then
-          cli_minutes="$1"; shift
-          [[ $# -gt 0 ]] && cli_msg="$*"
-          break
+        if [[ -z "$cli_msg" ]]; then
+          cli_msg="$1"; shift
         else
           cli_msg="${cli_msg:+$cli_msg }$1"; shift
         fi
@@ -54,46 +52,58 @@ __H__
     esac
   done
 
-  # --- Picker if minutes not provided ---
-  local mins choice
-  if [[ -z "${cli_minutes:-}" ]]; then
+  # --- Pick unit if not provided ---
+  local unit value choice
+  if [[ -z "${cli_unit:-}" ]]; then
     if command -v fzf >/dev/null; then
-      local -a opts
-      local i h m label
-      for (( i=0; i<=30; i++ )); do
-        label=$(( i==0 ? 0 : i ))" min"
-        (( i==0 )) && label="now"
-        opts+=("${i}|${label}")
-      done
-      for (( i=45; i<=720; i+=15 )); do
-        h=$(( i/60 )); m=$(( i%60 ))
-        if (( h == 0 )); then
-          label="${i} min"
-        else
-          label="${h} h"; (( m )) && label="${label} ${m} min"
-        fi
-        opts+=("${i}|${label}")
-      done
-      choice=$(printf "%s\n" "${opts[@]}" | sed 's/|/ -> /' \
-        | fzf --prompt="Remind in: " --height=40% --reverse --ansi) || return 1
-      mins=$(printf "%s" "$choice" | awk '{print $1}')
+      choice=$(printf "seconds\nminutes\nhours\ndays\n" \
+        | fzf --prompt="Unit: " --height=20% --reverse --ansi) || return 1
+      unit="$choice"
     else
-      print "fzf not found. Enter minutes (0..720)."
-      read -r "mins?Minutes: " || return 1
+      print "Unit (seconds, minutes, hours, days): "
+      read -r unit || return 1
     fi
   else
-    mins="${cli_minutes}"
+    unit="$cli_unit"
   fi
 
-  # --- Sanitize minutes ---
-  if ! [[ "$mins" == <-> ]]; then
-    print "Invalid minutes: $mins"; return 1
+  # --- Validate unit ---
+  case "$unit" in
+    seconds|minutes|hours|days) ;;
+    *) print "❌ Invalid unit: $unit"; return 1 ;;
+  esac
+
+  # --- Pick value based on unit ---
+  if [[ -z "${cli_value:-}" ]]; then
+    local max
+    case "$unit" in
+      seconds) max=60 ;;
+      minutes) max=60 ;;
+      hours) max=24 ;;
+      days) max=7 ;;
+    esac
+    if command -v fzf >/dev/null; then
+      local -a opts
+      for (( i=0; i<=max; i++ )); do
+        opts+=("$i")
+      done
+      value=$(printf "%s\n" "${opts[@]}" \
+        | fzf --prompt="Value ($unit): " --height=40% --reverse --ansi) || return 1
+    else
+      print "Enter value for $unit (0..$max): "
+      read -r value || return 1
+    fi
+  else
+    value="$cli_value"
   fi
-  (( mins < 0 )) && mins=0
-  (( mins > 720 )) && mins=720
-  if (( mins > 30 )); then
-    mins=$(( ((mins + 14) / 15) * 15 ))
-  fi
+
+  # --- Range check ---
+  case "$unit" in
+    seconds) (( value >=0 && value <=60 )) || { print "Invalid seconds"; return 1; } ;;
+    minutes) (( value >=0 && value <=60 )) || { print "Invalid minutes"; return 1; } ;;
+    hours)   (( value >=0 && value <=24 )) || { print "Invalid hours"; return 1; } ;;
+    days)    (( value >=0 && value <=7 ))  || { print "Invalid days"; return 1; } ;;
+  esac
 
   # --- Message ---
   local msg
@@ -116,8 +126,8 @@ __H__
   # --- Build JSON payload ---
   local payload
   payload=$(jq -nc \
-    --arg unit "minutes" \
-    --argjson value "$mins" \
+    --arg unit "$unit" \
+    --argjson value "$value" \
     --arg title "$title" \
     --arg message "$msg" \
     '{
@@ -143,7 +153,7 @@ __H__
   # --- Log result ---
   local ts_now
   ts_now="$(date '+%H:%M:%S')"
-  print "[reminder] $ts_now -> scheduled in $mins min : $msg"
+  print "[reminder] $ts_now -> scheduled in $value $unit : $msg"
   print "[API Response] $resp"
 }
 
