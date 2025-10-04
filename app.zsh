@@ -35,6 +35,12 @@ app() {
     gihub      https://github.com/ashgw
     whatsapp   https://web.whatsapp.com
     wh         https://web.whatsapp.com
+    gemini     https://gemini.google.com
+    gm         https://gemini.google.com
+    youtube    https://youtube.com
+    yt         https://youtube.com
+    google     https://google.com
+    gg         https://google.com
   )
 
   if [[ -n ${1-} ]]; then
