@@ -151,7 +151,6 @@ A terminal-first productivity toolkit with 200+ functions for sys ad, cloud ops,
 - `genpass_easy` - Generate hex password (16 bytes as 32 hex chars)
 - `genpass_mid` - Generate base64 alphanumeric password (32 chars)
 - `genpass_hard` - Generate complex password with special characters (32 chars)
-- `ashgw` - Custom system info display with figlet logo, hardware details, and colored output
 - `man` - Enhanced man pages with colored output using LESS_TERMCAP
 - `precmd` - ZSH hook for terminal title and newline before prompt
 - `loc` - Count lines of code excluding node_modules/dist/build directories using cloc
@@ -159,3 +158,4 @@ A terminal-first productivity toolkit with 200+ functions for sys ad, cloud ops,
 - `clock` - Display terminal clock using tty-clock
 
 And more...
+

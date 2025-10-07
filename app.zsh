@@ -31,8 +31,8 @@ app() {
     instagram  https://instagram.com
     ig         https://instagram.com
     grok       https://grok.com
-    gh         https://github.com/ashgw
-    gihub      https://github.com/ashgw
+    gh         https://github.com/rccyx
+    gihub      https://github.com/rccyx
     whatsapp   https://web.whatsapp.com
     wh         https://web.whatsapp.com
     gemini     https://gemini.google.com

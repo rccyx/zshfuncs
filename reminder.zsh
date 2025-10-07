@@ -16,7 +16,7 @@ reminder() {
     return 1
   fi
 
-  local ENDPOINT="https://ashgw.me/api/v1/reminder"
+  local ENDPOINT="https://api.rccyx.com/v1/reminder"
 
   # --- Parse CLI args ---
   local cli_unit="" cli_value="" cli_msg="" cli_title=""

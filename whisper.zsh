@@ -1,4 +1,4 @@
-# refer to https://github.com/ashgw/whisper
+# refer to https://github.com/rccyx/whisper
 w() {
   setopt localoptions errexit nounset pipefail
   autoload -Uz colors && colors
