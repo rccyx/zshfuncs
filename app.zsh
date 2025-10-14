@@ -1,16 +1,13 @@
-# Open sites as native Chrome app windows using "Default" profile.
-# Usage:
-#   app                    # fzf picker
-#   app x                  # alias key
-#   app https://x.com      # direct URL
+# Open sites as native app windows using Chrome (or Brave for YouTube)
 app() {
   emulate -L zsh
   setopt localoptions err_return no_unset
 
-  local browser profile target sel key
+  local browser brave profile target sel key
   browser=$(command -v google-chrome || command -v chromium || true)
-  if [[ -z ${browser-} ]]; then
-    print -P "%F{red}google-chrome or chromium not found%f"
+  brave=$(command -v brave-browser || command -v brave || true)
+  if [[ -z ${browser-} && -z ${brave-} ]]; then
+    print -P "%F{red}Neither Chrome nor Brave found%f"
     return 1
   fi
 
@@ -68,10 +65,17 @@ app() {
     return 1
   fi
 
-  if command -v setsid >/dev/null 2>&1; then
-    setsid -f "$browser" --profile-directory="$profile" --app="$target" --new-window >/dev/null 2>&1
+  local cmd
+  if [[ ${target} == https://youtube.com* ]]; then
+    cmd=$brave
   else
-    nohup "$browser" --profile-directory="$profile" --app="$target" --new-window >/dev/null 2>&1 &
+    cmd=$browser
+  fi
+
+  if command -v setsid >/dev/null 2>&1; then
+    setsid -f "$cmd" --profile-directory="$profile" --app="$target" --new-window >/dev/null 2>&1
+  else
+    nohup "$cmd" --profile-directory="$profile" --app="$target" --new-window >/dev/null 2>&1 &
   fi
 }
 
