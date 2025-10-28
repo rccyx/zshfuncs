@@ -116,16 +116,16 @@ paste(){ _paste; }   # prints clipboard
 # create a new directory & cd into it
 mdd () { mkdir -p "$@" && cd "$@"; }
 
+
 cpd() {
-  # Copy readable TEXT files to clipboard from DIR (default .),
-  # ignoring VCS junk, deps, caches, and build outputs. Size shown = actual text payload.
+  # copy readable text files to clipboard from dir (default .),
+  # ignoring vcs junk, deps, caches, build outputs, images, videos, fonts, and lockfiles
   emulate -L zsh
   setopt err_return
 
   local dir="${1:-.}" max_mb=10
   [[ -d "$dir" ]] || { _err "'$dir' is not a directory"; return 1; }
 
-  # enumerate files as NUL-separated relative paths
   local list; list="$(mktemp)" || { _err "mktemp failed"; return 1; }
   (
     cd "$dir" || exit 1
@@ -152,34 +152,31 @@ cpd() {
     fi
   ) >"$list" || { rm -f "$list"; _err "failed to enumerate files"; return 1; }
 
-  # hard skip helper
-  local _skip
   _skip() {
     local p="${1#./}"
-    case "$p" in
-      .git|.git/*|*/.git|*/.git/*) return 0 ;;
-      .git*|*/.git*) return 0 ;;                      # .gitignore .gitattributes .gitmodules etc
-      .github|.github/*|*/.github|*/.github/*) return 0 ;;
-      .gitlab|.gitlab/*|*/.gitlab|*/.gitlab/*) return 0 ;;
-      node_modules|node_modules/*|*/node_modules|*/node_modules/*) return 0 ;;
-      .pnpm-store|.pnpm-store/*|*/.pnpm-store|*/.pnpm-store/*) return 0 ;;
-      .yarn|.yarn/*|*/.yarn|*/.yarn/*|.npm|.npm/*|*/.npm|*/.npm/*) return 0 ;;
-      .venv|.venv/*|*/.venv|*/.venv/*|venv|venv/*|*/venv|*/venv/*) return 0 ;;
-      __pycache__|__pycache__/*|*/__pycache__|*/__pycache__/*) return 0 ;;
-      .cache|.cache/*|*/.cache|*/.cache/*) return 0 ;;
-      dist|dist/*|*/dist|*/dist/*|build|build/*|*/build|*/build/*) return 0 ;;
-      .next|.next/*|*/.next|*/.next/*|out|out/*|*/out|*/out/*) return 0 ;;
-      .turbo|.turbo/*|*/.turbo|*/.turbo/*|.vercel|.vercel/*|*/.vercel|*/.vercel/*) return 0 ;;
-      target|target/*|*/target|*/target/*|vendor|vendor/*|*/vendor|*/vendor/*) return 0 ;;
-      .idea|.idea/*|*/.idea|*/.idea/*|.vscode|.vscode/*|*/.vscode|*/.vscode/*) return 0 ;;
-      .DS_Store|*/.DS_Store|Thumbs.db|*/Thumbs.db) return 0 ;;
+    local lp="${p:l}"
+    case "$lp" in
+      .git|.git/*|*/.git/*|.github*|*/.github/*|.gitlab*|*/.gitlab/*) return 0 ;;
+      node_modules/*|.pnpm-store/*|.yarn/*|.npm/*) return 0 ;;
+      .venv/*|venv/*|__pycache__/*|.cache/*) return 0 ;;
+      dist/*|build/*|.next/*|out/*|.turbo/*|.vercel/*) return 0 ;;
+      target/*|vendor/*|.idea/*|.vscode/*) return 0 ;;
+      .ds_store|*/.ds_store|thumbs.db|*/thumbs.db) return 0 ;;
+    esac
+    case "$lp" in
+      *.ttf|*.otf|*.ttc|*.otc|*.woff|*.woff2|*.eot) return 0 ;;   # fonts
+      *.jpg|*.jpeg|*.png|*.gif|*.webp|*.avif|*.bmp|*.tif|*.tiff|*.ico|*.heic|*.heif|*.svg) return 0 ;;
+      *.mp4|*.m4v|*.mov|*.avi|*.mkv|*.webm|*.mpg|*.mpeg|*.flv|*.wmv) return 0 ;;
+      package-lock.json|pnpm-lock.yaml|yarn.lock|npm-shrinkwrap.json|deno.lock|bun.lock|bun.lockb|cargo.lock|poetry.lock|pipfile.lock|uv.lock|requirements*.lock) return 0 ;;
     esac
     return 1
   }
 
-  # text check
-  local _is_text
   _is_text() {
+    local lp="${1:l}"
+    case "$lp" in
+      *.ttf|*.otf|*.ttc|*.otc|*.woff|*.woff2|*.eot|*.png|*.jpg|*.jpeg|*.gif|*.webp|*.mp4|*.mkv|*.mov) return 1 ;;
+    esac
     if _have file; then
       file --mime --brief -- "$1" | grep -qiE 'charset=(utf-8|us-ascii|iso-|text)'
     else
@@ -187,8 +184,6 @@ cpd() {
     fi
   }
 
-  # human size
-  local _fmt_size
   _fmt_size() {
     local b="$1"
     if _have numfmt; then
@@ -202,7 +197,6 @@ cpd() {
     fi
   }
 
-  # compute payload size of what we will actually copy
   local -i total=0 sz
   while IFS= read -r -d '' f; do
     _skip "$f" && continue
@@ -210,7 +204,6 @@ cpd() {
     if _is_text "$dir/$f"; then
       sz=$(stat -c %s -- "$dir/$f" 2>/dev/null || echo 0)
       total=$(( total + sz ))
-      # header + newline cost is negligible, skip for simplicity
     fi
   done <"$list"
 
@@ -223,7 +216,6 @@ cpd() {
     [[ $REPLY =~ ^[Yy]$ ]] || { rm -f "$list"; _err "aborted"; return 1; }
   fi
 
-  # stream payload
   (
     cd "$dir" || exit 1
     while IFS= read -r -d '' f; do
@@ -241,7 +233,6 @@ cpd() {
   rm -f "$list"
   _ok "copied files from '$dir' to clipboard ($human)"
 }
-
 
 # Elite dir ⇄ clipboard with real actions, progress, and safe defaults
 clipdir() {
