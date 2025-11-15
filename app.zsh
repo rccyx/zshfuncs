@@ -38,6 +38,8 @@ app() {
     yt         https://youtube.com
     google     https://google.com
     gg         https://google.com
+    pp         https://perplexity.ai
+    perplexity https://perplexity.ai
   )
 
   if [[ -n ${1-} ]]; then
