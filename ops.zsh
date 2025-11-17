@@ -440,6 +440,115 @@ clipdir() {
   esac
 }
 
+# FZF mv
+mvw() {
+  emulate -L zsh
+  setopt pipefail
+
+  if ! command -v fzf >/dev/null 2>&1; then
+    print "mvw: fzf is required" >&2
+    return 1
+  fi
+
+  local -a candidates
+  if command -v fd >/dev/null 2>&1; then
+    candidates=("${(@f)$(fd . . 2>/dev/null)}")
+  else
+    candidates=("${(@f)$(find . -mindepth 1 -maxdepth 10 -print 2>/dev/null)}")
+  fi
+
+  (( ${#candidates} )) || return 0
+
+  local src_raw
+  src_raw=$(
+    printf '%s\n' "${candidates[@]}" \
+    | fzf --multi \
+          --prompt='mvw source> ' \
+          --preview 'ls -la --color=always {} 2>/dev/null || stat {} 2>/dev/null'
+  ) || return 0
+
+  [[ -z "$src_raw" ]] && return 0
+
+  local -a src
+  src=("${(@f)src_raw}")
+
+  local dest_root="/"
+  local dest
+  if command -v fd >/dev/null 2>&1; then
+    dest=$(
+      fd . "$dest_root" -t d --hidden --follow --exclude .git --absolute-path 2>/dev/null \
+      | fzf --prompt='mvw dest> ' \
+            --preview 'ls -la --color=always {} 2>/dev/null'
+    ) || return 0
+  else
+    dest=$(
+      find "$dest_root" -maxdepth 15 -type d 2>/dev/null \
+      | fzf --prompt='mvw dest> ' \
+            --preview 'ls -la --color=always {} 2>/dev/null'
+    ) || return 0
+  fi
+
+  [[ -z "$dest" ]] && return 0
+
+  mv -iv -- "${src[@]}" "$dest"/
+}
+
+cpw() {
+  emulate -L zsh
+  setopt pipefail
+
+  if ! command -v fzf >/dev/null 2>&1; then
+    print "cpw: fzf is required" >&2
+    return 1
+  fi
+
+  local -a candidates
+  if command -v fd >/dev/null 2>&1; then
+    candidates=("${(@f)$(fd . . 2>/dev/null)}")
+  else
+    candidates=("${(@f)$(find . -mindepth 1 -maxdepth 10 -print 2>/dev/null)}")
+  fi
+
+  (( ${#candidates} )) || return 0
+
+  local src_raw
+  src_raw=$(
+    printf '%s\n' "${candidates[@]}" \
+    | fzf --multi \
+          --prompt='cpw source> ' \
+          --preview 'ls -la --color=always {} 2>/dev/null || stat {} 2>/dev/null'
+  ) || return 0
+
+  [[ -z "$src_raw" ]] && return 0
+
+  local -a src
+  src=("${(@f)src_raw}")
+
+  local dest_root="/"
+  local dest
+  if command -v fd >/dev/null 2>&1; then
+    dest=$(
+      fd . "$dest_root" -t d --hidden --follow --exclude .git --absolute-path 2>/dev/null \
+      | fzf --prompt='cpw dest> ' \
+            --preview 'ls -la --color=always {} 2>/dev/null'
+    ) || return 0
+  else
+    dest=$(
+      find "$dest_root" -maxdepth 15 -type d 2>/dev/null \
+      | fzf --prompt='cpw dest> ' \
+            --preview 'ls -la --color=always {} 2>/dev/null'
+    ) || return 0
+  fi
+
+  [[ -z "$dest" ]] && return 0
+
+  cp -ivr -- "${src[@]}" "$dest"/
+}
+
+
+
+
+
 # FZF delete picker
 rmw() {
   _have fzf || { echo "fzf missing"; return 1; }
