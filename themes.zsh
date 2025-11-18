@@ -10,6 +10,7 @@ themes() {
       catppuccin \
       green \
       indigo \
+      red \
       swirl-rose \
       white \
     | fzf --prompt='theme > ' --height=40%
@@ -47,6 +48,13 @@ themes() {
       tmux_file="$root/tmux/indigo.conf"
       hypr_theme_file="indigo.conf"
       wallpaper_file="$root/.wallpapers/indigo.png"
+      ;;
+    red)
+      starship_file="$root/starship/starship-red.toml"
+      dircolors_file="$root/dircolors/red"
+      tmux_file="$root/tmux/red.conf"
+      hypr_theme_file="red.conf"
+      wallpaper_file="$root/.wallpapers/red.jpg"
       ;;
     swirl-rose)
       starship_file="$root/starship/starship-swirl-rose.toml"
