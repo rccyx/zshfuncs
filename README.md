@@ -263,6 +263,7 @@ I hate the mental drag of clicking through UIs, so I run almost everything from 
 - `apply_gnome` - Apply custom GNOME theme, icons, and fonts via gsettings
 - `wallpaper` - Comprehensive wallpaper manager for desktop and login (swww + waypaper)
 - `kittytheme` - Set kitty terminal theme from config directory
+- `themes`  Switches my themes across Hyprland, Starship, tmux, wallpaper, and dircolors in one command.
 
 ### Input & Display
 
@@ -312,3 +313,4 @@ I hate the mental drag of clicking through UIs, so I run almost everything from 
 ## Utilities
 
 - Various helper functions for colors, error handling, system detection and a whole lotta gang shit.
+
