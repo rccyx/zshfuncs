@@ -1,8 +1,9 @@
 # =================== PACKAGE-ONLY SYNC ===================
 # Backs up: APT manual pkgs, dpkg selections,
-# snaps, flatpaks, pip/pipx, npm/pnpm, cargo, rustup, go, nix, brew,
+# snaps, flatpaks, pip/pipx, npm/pnpm, cargo, rustup, go, nix,
 # and GNOME keybindings only if GNOME is running.
-# Writes: restore.sh inside $backup_dir
+# Also backs up APT repo config + keyrings.
+# Writes: restore.sh inside $dotdir/packages
 # ========================================================
 
 # --- msg helpers (safe defaults) ---
@@ -17,12 +18,14 @@ _is_gnome_active() {
   return 1
 }
 
-
 sync() {
   setopt local_options err_return pipe_fail
 
+  # dotfiles root, override with DOTFILES_DIR if you want
   local dotdir="${DOTFILES_DIR:-$HOME/personal/projects/dotfiles}"
-  local backup_dir="$dotdir/other"
+
+  # new target: everything lives under ./packages (not ./other)
+  local backup_dir="$dotdir/packages"
   mkdir -p "$backup_dir"
 
   _private_sync_apt         "$backup_dir"
@@ -40,20 +43,19 @@ sync() {
   _private_sync_rustup      "$backup_dir"
   _private_sync_go          "$backup_dir"
   _private_sync_nix         "$backup_dir"
-  _private_sync_brew        "$backup_dir"
 
-  # Only save GNOME keybindings if GNOME is active
+  # Only save GNOME keybindings if GNOME is active; otherwise ignore GNOME completely
   if _is_gnome_active; then
     _private_sync_gnome_keys "$backup_dir"
   else
-    _note "Not on GNOME right now, skipping GNOME keybindings"
+    _note "GNOME not running, skipping GNOME keybindings"
   fi
 
   _private_write_restore_min "$backup_dir"
 
   # commit only if there are real changes
   cd "$dotdir" || { _err "dotfiles repo not found: $dotdir"; return 1; }
-  git add "$backup_dir"/**/* "$backup_dir"/* 2>/dev/null || true
+  git add -A "$backup_dir" 2>/dev/null || true
   if git diff --cached --quiet; then
     _note "no changes to commit"
   else
@@ -65,15 +67,43 @@ sync() {
 # ---------- helpers (packages only) ----------
 
 _private_sync_apt() {
-  local out="$1/apt-installed.txt"
+  local base="$1"
+  local out="$base/apt-installed.txt"
+  local etcdir="$base/apt-etc"
+
   if command -v apt-mark >/dev/null; then
+    # manual packages
     comm -23 \
       <(apt-mark showmanual | sort) \
       <(gzip -dc /var/log/installer/initial-status.gz 2>/dev/null | awk '/Package: / { print $2 }' | sort) \
       > "$out"
-    _ok "APT manual packages saved → $out"
+
+    mkdir -p "$etcdir"
+
+    # APT sources
+    if [[ -f /etc/apt/sources.list ]]; then
+      cp -a /etc/apt/sources.list "$etcdir/sources.list"
+    fi
+
+    if [[ -d /etc/apt/sources.list.d ]]; then
+      mkdir -p "$etcdir/sources.list.d"
+      cp -a /etc/apt/sources.list.d/* "$etcdir/sources.list.d/" 2>/dev/null || :
+    fi
+
+    # APT keyrings / trusted keys
+    if [[ -d /etc/apt/trusted.gpg.d ]]; then
+      mkdir -p "$etcdir/trusted.gpg.d"
+      cp -a /etc/apt/trusted.gpg.d/* "$etcdir/trusted.gpg.d/" 2>/dev/null || :
+    fi
+
+    if [[ -d /etc/apt/keyrings ]]; then
+      mkdir -p "$etcdir/keyrings"
+      cp -a /etc/apt/keyrings/* "$etcdir/keyrings/" 2>/dev/null || :
+    fi
+
+    _ok "APT manual packages and repo config saved → $out, $etcdir"
   else
-    _note "apt not found, skipped"
+    _note "apt-mark not found, skipped APT snapshot"
   fi
 }
 
@@ -214,19 +244,6 @@ _private_sync_nix() {
   fi
 }
 
-_private_sync_brew() {
-  local dir="$1/brew"
-  if command -v brew >/dev/null; then
-    mkdir -p "$dir"
-    brew tap            > "$dir/taps.txt"      2>/dev/null || :
-    brew list           > "$dir/formulae.txt"  2>/dev/null || :
-    brew list --cask    > "$dir/casks.txt"     2>/dev/null || :
-    _ok "Homebrew lists saved → $dir"
-  else
-    _note "brew not found, skipped"
-  fi
-}
-
 # GNOME: keybindings only, and only if GNOME is active
 _private_sync_gnome_keys() {
   local out="$1/keybindings.dconf"
@@ -251,6 +268,31 @@ _private_write_restore_min() {
 #!/usr/bin/env bash
 set -euo pipefail
 BASEDIR="$(cd "$(dirname "$0")" && pwd)"
+APT_ETC="$BASEDIR/apt-etc"
+
+echo "==> Restoring APT sources and keyrings"
+if command -v apt >/dev/null && [[ -d "$APT_ETC" ]]; then
+  if [[ -f "$APT_ETC/sources.list" ]]; then
+    sudo cp -f "$APT_ETC/sources.list" /etc/apt/sources.list || true
+  fi
+
+  if [[ -d "$APT_ETC/sources.list.d" ]]; then
+    sudo mkdir -p /etc/apt/sources.list.d
+    sudo cp -f "$APT_ETC/sources.list.d"/* /etc/apt/sources.list.d/ 2>/dev/null || true
+  fi
+
+  if [[ -d "$APT_ETC/trusted.gpg.d" ]]; then
+    sudo mkdir -p /etc/apt/trusted.gpg.d
+    sudo cp -f "$APT_ETC/trusted.gpg.d"/* /etc/apt/trusted.gpg.d/ 2>/dev/null || true
+  fi
+
+  if [[ -d "$APT_ETC/keyrings" ]]; then
+    sudo mkdir -p /etc/apt/keyrings
+    sudo cp -f "$APT_ETC/keyrings"/* /etc/apt/keyrings/ 2>/dev/null || true
+  fi
+
+  sudo apt update || true
+fi
 
 echo "==> Installing APT manual packages"
 if command -v apt >/dev/null && [[ -f "$BASEDIR/apt-installed.txt" ]]; then
@@ -311,13 +353,6 @@ if command -v go >/dev/null && [[ -f "$BASEDIR/go-tools.txt" ]]; then
   awk '!/^($|#)/{print $0}' "$BASEDIR/go-tools.txt" | xargs -r -n1 go install || true
 fi
 
-echo "==> Restoring Homebrew lists"
-if command -v brew >/dev/null && [[ -d "$BASEDIR/brew" ]]; then
-  [[ -f "$BASEDIR/brew/taps.txt"     ]] && xargs -a "$BASEDIR/brew/taps.txt"     -r brew tap || true
-  [[ -f "$BASEDIR/brew/formulae.txt" ]] && xargs -a "$BASEDIR/brew/formulae.txt" -r brew install || true
-  [[ -f "$BASEDIR/brew/casks.txt"    ]] && xargs -a "$BASEDIR/brew/casks.txt"    -r brew install --cask || true
-fi
-
 echo "==> GNOME keybindings (optional)"
 [[ -f "$BASEDIR/keybindings.dconf" ]] && command -v dconf >/dev/null && dconf load /org/gnome/settings-daemon/plugins/media-keys/ < "$BASEDIR/keybindings.dconf" || true
 
@@ -325,129 +360,5 @@ echo "==> Done"
 RESTORE
   chmod +x "$file"
   _ok "restore script written → $file"
-}
-
-# ===== Optional full GNOME replica (save|load) =====
-# Only runs when you call it, not from syncall
-syncgnome() {
-  setopt local_options err_return no_unset pipe_fail
-
-  local mode="${1:-}"
-  if [[ "$mode" != "save" && "$mode" != "load" ]]; then
-    _err "Usage: syncgnome [save|load]"
-    return 1
-  fi
-
-  local REPO="${GNOME_REPO:-$HOME/personal/projects/gnome}"
-  local EXT_SRC="$HOME/.local/share/gnome-shell/extensions"
-  local EXT_DST="$HOME/.local/share/gnome-shell/extensions"
-  local EXT_REPO="$REPO/gnome-shell/extensions"
-  local FULL_CONF="$REPO/gnome-full.dconf"
-  local ENABLED_FILE="$REPO/gnome-enabled.txt"
-  local BACKUPS_DIR="$REPO/_backups"
-  local TS="$(date -Iseconds | tr ':' '_')"
-
-  command -v dconf >/dev/null || { _err "dconf not found"; return 1; }
-  mkdir -p "$REPO" "$EXT_REPO" "$BACKUPS_DIR" "$EXT_DST"
-
-  if [[ "$mode" == "save" ]]; then
-    _note "Saving full GNOME dconf tree"
-    dconf dump / > "$FULL_CONF"
-    _ok "Saved → $FULL_CONF"
-
-    if command -v gnome-extensions >/dev/null; then
-      gnome-extensions list --enabled > "$ENABLED_FILE" || true
-      _ok "Enabled extensions → $ENABLED_FILE"
-    else
-      _note "gnome-extensions CLI missing, skipping enabled list"
-    fi
-
-    if [[ -d "$EXT_SRC" ]]; then
-      _note "Copying user extensions to repo"
-      rsync -a --delete "$EXT_SRC"/ "$EXT_REPO"/
-      _ok "Extensions copied"
-    else
-      _note "No user extensions at $EXT_SRC"
-    fi
-
-    cat > "$REPO/restore.sh" <<'RESTORE'
-#!/usr/bin/env bash
-set -euo pipefail
-REPO="$HOME/personal/projects/gnome"
-EXT_REPO="$REPO/gnome-shell/extensions"
-EXT_DST="$HOME/.local/share/gnome-shell/extensions"
-FULL_CONF="$REPO/gnome-full.dconf"
-BACKUPS_DIR="$REPO/_backups"
-TS="$(date -Iseconds | tr ':' '_')"
-
-mkdir -p "$EXT_DST" "$BACKUPS_DIR"
-echo "==> Backup current GNOME to ${BACKUPS_DIR}/pre-restore-${TS}.dconf"
-dconf dump / > "${BACKUPS_DIR}/pre-restore-${TS}.dconf" || true
-
-if [[ -d "$EXT_REPO" ]]; then
-  echo "==> Syncing extensions"
-  rsync -a --delete "$EXT_REPO"/ "$EXT_DST"/
-fi
-
-if command -v gnome-extensions >/dev/null 2>&1 && [[ -f "$REPO/gnome-enabled.txt" ]]; then
-  echo "==> Enabling listed extensions"
-  while IFS= read -r uuid; do
-    [[ -z "$uuid" ]] && continue
-    gnome-extensions enable "$uuid" >/dev/null 2>&1 || true
-  done < "$REPO/gnome-enabled.txt"
-fi
-
-if [[ -f "$FULL_CONF" ]]; then
-  echo "==> Applying dconf"
-  dconf load / < "$FULL_CONF" || true
-fi
-
-echo "==> Done"
-echo "Tip: On Xorg press Alt+F2, type r, Enter. On Wayland log out and back in."
-RESTORE
-    chmod +x "$REPO/restore.sh"
-    _ok "Wrote GNOME restore → $REPO/restore.sh"
-
-    # commit on save
-    cd "$REPO" || { _err "gnome repo not found: $REPO"; return 1; }
-    git add -A
-    if git diff --cached --quiet; then
-      _note "no changes to commit (gnome repo up to date)"
-    else
-      git commit -m "syncgnome: exts+settings $(date -Iseconds)" || { _err "commit failed"; return 1; }
-      git push && _ok "GNOME config synced"
-    fi
-    return 0
-  fi
-
-  # load
-  local BK="$BACKUPS_DIR/pre-load-${TS}.dconf"
-  _note "Backing up current box to $BK"
-  dconf dump / > "$BK" || true
-
-  if [[ -d "$EXT_REPO" ]]; then
-    _note "Syncing extensions from repo"
-    rsync -a --delete "$EXT_REPO"/ "$EXT_DST"/
-    _ok "Extensions synced"
-  fi
-
-  if command -v gnome-extensions >/dev/null && [[ -f "$ENABLED_FILE" ]]; then
-    _note "Enabling listed extensions"
-    while IFS= read -r uuid; do
-      [[ -z "$uuid" ]] && continue
-      gnome-extensions enable "$uuid" >/dev/null 2>&1 || true
-    done < "$ENABLED_FILE"
-    _ok "Extension enabling pass complete"
-  fi
-
-  if [[ -f "$FULL_CONF" ]]; then
-    _note "Applying full GNOME settings"
-    dconf load / < "$FULL_CONF" || true
-    _ok "Settings applied"
-  else
-    _note "No $FULL_CONF to load"
-  fi
-
-  _note "If you need to revert: dconf load / < $BK"
 }
 
