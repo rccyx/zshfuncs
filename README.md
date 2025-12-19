@@ -1,6 +1,6 @@
 # zshfuncs
 
-I hate the mental drag of clicking through UIs, so I run almost everything from the terminal. This is a terminal-first productivity toolkit with over 200 commands covering system administration, cloud ops, dev workflows, and everyday automation that I use.
+I hate the mental drag of clicking through UIs, so I run almost everything from the terminal. This is a terminal toolkit with over 200 commands covering system administration, cloud ops, workflows, and everyday automations that I use and much more.
 
 ## Security & Authentication
 
@@ -218,6 +218,12 @@ I hate the mental drag of clicking through UIs, so I run almost everything from 
 
 ## System & Storage
 
+### Hygiene
+
+`health` – System health sweep. Checks for failed systemd units, SSD wear and integrity via SMART (NVMe + SATA), and oversized cache directories (language caches, journals, build junk). Read-only, fast, cron-safe. Exits non-zero if something needs attention.
+
+`bloat` – Disk rot detector. Finds the largest files on the system that haven’t been modified in over 30 days, excluding virtual filesystems. Surfaces forgotten git packfiles, build caches, browser runtimes, and other silent disk hogs. Read-only, sortable, path-scoped.
+
 ### Disk Management
 
 - `diskusage` - Interactive disk usage analysis using dua-cli
@@ -263,7 +269,7 @@ I hate the mental drag of clicking through UIs, so I run almost everything from 
 - `apply_gnome` - Apply custom GNOME theme, icons, and fonts via gsettings
 - `wallpaper` - Comprehensive wallpaper manager for desktop and login (swww + waypaper)
 - `kittytheme` - Set kitty terminal theme from config directory
-- `themes`  Switches my themes across Hyprland, Starship, tmux, wallpaper, and dircolors in one command.
+- `themes` Switches my themes across Hyprland, Starship, tmux, wallpaper, and dircolors in one command.
 
 ### Input & Display
 
@@ -309,8 +315,3 @@ I hate the mental drag of clicking through UIs, so I run almost everything from 
 - `man` - Enhanced man pages with colored output using LESS_TERMCAP
 - `precmd` - ZSH hook for terminal title and newline before prompt
 - `clr` - Print ANSI color codes for terminal formatting
-
-## Utilities
-
-- Various helper functions for colors, error handling, system detection and a whole lotta gang shit.
-
