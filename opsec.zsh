@@ -582,3 +582,319 @@ PY
   return 0
 }
 
+
+# ============================================
+# verify - install-time sanity checker
+# awareness, not enforcement
+#
+# usage:
+#   verify <cmd|path> [more...]
+#   verify --sig <file.pkg>     (force signature attempt)
+#   verify --no-hash <target>
+#   verify --hash sha256|sha1|blake2 <target>
+#
+# notes:
+# - installed binaries rarely have direct signatures; package files often do
+# - best-effort package ownership: dpkg, rpm, pacman, apk, nix, snap, flatpak
+# ============================================
+verify() {
+  emulate -L zsh
+  setopt pipefail no_unset
+
+  local want_sig=0
+  local want_hash=1
+  local hash_alg="${VERIFY_HASH_ALG:-sha256}"
+
+  while (( $# )); do
+    case "$1" in
+      --sig) want_sig=1; shift ;;
+      --no-hash) want_hash=0; shift ;;
+      --hash)
+        [[ -n "${2-}" ]] || { print -ru2 -- "verify: --hash needs algo"; return 2; }
+        hash_alg="$2"; shift 2 ;;
+      -h|--help)
+        cat <<'EOF'
+verify <cmd|path> [more...]
+
+shows:
+- resolved path + all PATH hits
+- file type, perms, owner, mtime, size
+- hash (default sha256)
+- best-effort package ownership
+- signature verification when available (rpm/deb sidecars, etc)
+
+flags:
+  --sig           force signature attempt (also auto-attempts for known pkg files)
+  --no-hash       skip hashing
+  --hash <algo>   sha256 | sha1 | blake2
+EOF
+        return 0
+        ;;
+      --) shift; break ;;
+      -*) print -ru2 -- "verify: unknown flag: $1"; return 2 ;;
+      *) break ;;
+    esac
+  done
+
+  (( $# > 0 )) || { print -ru2 -- "verify: missing target"; return 2; }
+
+  local _p_ok="%F{2}ok%f"
+  local _p_warn="%F{3}warn%f"
+  local _p_bad="%F{1}bad%f"
+  local _p_note="%F{6}::%f"
+
+  _is_suspicious_path() {
+    local p="$1"
+    local home="${HOME:-}"
+    [[ "$p" == /tmp/* ]] && return 0
+    [[ "$p" == /var/tmp/* ]] && return 0
+    [[ "$p" == /dev/shm/* ]] && return 0
+    [[ "$p" == /run/user/* ]] && return 0
+    [[ -n "$home" && "$p" == "$home"/.cache/* ]] && return 0
+    [[ -n "$home" && "$p" == "$home"/Downloads/* ]] && return 0
+    [[ -n "$home" && "$p" == "$home"/.local/share/Trash/* ]] && return 0
+    return 1
+  }
+
+  _hash_file() {
+    local alg="$1" p="$2"
+    case "$alg" in
+      sha256)
+        if command -v sha256sum >/dev/null 2>&1; then sha256sum "$p" | awk '{print $1}'
+        elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$p" | awk '{print $NF}'
+        else return 1
+        fi
+        ;;
+      sha1)
+        if command -v sha1sum >/dev/null 2>&1; then sha1sum "$p" | awk '{print $1}'
+        elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha1 "$p" | awk '{print $NF}'
+        else return 1
+        fi
+        ;;
+      blake2|b2|blake2b)
+        if command -v b2sum >/dev/null 2>&1; then b2sum "$p" | awk '{print $1}'
+        else return 1
+        fi
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+
+  _fmt_size() {
+    local bytes="$1"
+    if command -v numfmt >/dev/null 2>&1; then
+      numfmt --to=iec --suffix=B "$bytes" 2>/dev/null || print -r -- "$bytes"
+    else
+      print -r -- "$bytes"
+    fi
+  }
+
+  _owner_of_file() {
+    local p="$1"
+    # try multiple ecosystems; first win prints one line
+    if [[ "$p" == /nix/store/* ]] && command -v nix-store >/dev/null 2>&1; then
+      print -r -- "nix: $(nix-store -q --references "$p" 2>/dev/null | head -n 1)"
+      return 0
+    fi
+    if command -v dpkg-query >/dev/null 2>&1; then
+      local hit
+      hit="$(dpkg-query -S "$p" 2>/dev/null | head -n 1)"
+      [[ -n "$hit" ]] && { print -r -- "dpkg: $hit"; return 0; }
+    fi
+    if command -v rpm >/dev/null 2>&1; then
+      local hit
+      hit="$(rpm -qf "$p" 2>/dev/null | head -n 1)"
+      [[ -n "$hit" ]] && { print -r -- "rpm: $hit"; return 0; }
+    fi
+    if command -v pacman >/dev/null 2>&1; then
+      local hit
+      hit="$(pacman -Qo "$p" 2>/dev/null | head -n 1)"
+      [[ -n "$hit" ]] && { print -r -- "pacman: $hit"; return 0; }
+    fi
+    if command -v apk >/dev/null 2>&1; then
+      local hit
+      hit="$(apk info -W "$p" 2>/dev/null | head -n 1)"
+      [[ -n "$hit" ]] && { print -r -- "apk: $hit"; return 0; }
+    fi
+    if [[ "$p" == /snap/* || "$p" == /var/lib/snapd/* ]]; then
+      print -r -- "snap: path indicates snap"
+      return 0
+    fi
+    if [[ "$p" == /var/lib/flatpak/* || "$p" == "$HOME"/.local/share/flatpak/* ]]; then
+      print -r -- "flatpak: path indicates flatpak"
+      return 0
+    fi
+    return 1
+  }
+
+  _sig_try_pkgfile() {
+    local p="$1"
+    local base sig asc
+
+    # sidecar signatures (common in the wild)
+    sig="${p}.sig"
+    asc="${p}.asc"
+    if command -v gpg >/dev/null 2>&1; then
+      if [[ -f "$sig" ]]; then
+        print -P "  $_p_note gpg verify: ${sig:t}"
+        gpg --verify "$sig" "$p" 2>&1 | sed 's/^/    /'
+        return 0
+      fi
+      if [[ -f "$asc" ]]; then
+        print -P "  $_p_note gpg verify: ${asc:t}"
+        gpg --verify "$asc" "$p" 2>&1 | sed 's/^/    /'
+        return 0
+      fi
+    fi
+
+    case "$p" in
+      (*.rpm)
+        if command -v rpm >/dev/null 2>&1; then
+          print -P "  $_p_note rpm -K"
+          rpm -K "$p" 2>&1 | sed 's/^/    /'
+          return 0
+        fi
+        ;;
+      (*.deb)
+        if command -v debsig-verify >/dev/null 2>&1; then
+          print -P "  $_p_note debsig-verify"
+          debsig-verify "$p" 2>&1 | sed 's/^/    /'
+          return 0
+        fi
+        if command -v dpkg-sig >/dev/null 2>&1; then
+          print -P "  $_p_note dpkg-sig --verify"
+          dpkg-sig --verify "$p" 2>&1 | sed 's/^/    /'
+          return 0
+        fi
+        ;;
+    esac
+
+    return 1
+  }
+
+  local any_bad=0
+
+  local t
+  for t in "$@"; do
+    local p="" resolved="" dir="" typ="" meta="" size_b="" size_h="" mode="" owner="" group="" mtime=""
+    local -a hits
+    hits=()
+
+    print -r -- ""
+    print -P "$_p_note verify $t"
+
+    if [[ -e "$t" ]]; then
+      p="$t"
+    else
+      p="$(command -v -- "$t" 2>/dev/null || true)"
+      if [[ -z "$p" ]]; then
+        print -P "  $_p_bad not found"
+        any_bad=1
+        continue
+      fi
+      # PATH hits (all)
+      if command -v which >/dev/null 2>&1; then
+        hits=("${(@f)$(which -a "$t" 2>/dev/null | awk 'NF{print}' | uniq)}")
+      else
+        hits=("$p")
+      fi
+    fi
+
+    # resolve path
+    if command -v realpath >/dev/null 2>&1; then
+      resolved="$(realpath -e "$p" 2>/dev/null || true)"
+    fi
+    [[ -z "$resolved" ]] && resolved="$p"
+
+    dir="${resolved:h}"
+
+    print -r -- "  path: $resolved"
+    if (( ${#hits[@]} > 1 )); then
+      print -r -- "  path hits:"
+      local h
+      for h in "${hits[@]}"; do
+        print -r -- "    $h"
+      done
+    fi
+
+    if _is_suspicious_path "$resolved"; then
+      print -P "  $_p_warn location smells like temp/cache/downloads"
+      print -r -- "       if this is an install artifact, verify source before you run it"
+    fi
+
+    # basic metadata
+    if command -v stat >/dev/null 2>&1; then
+      size_b="$(stat -c '%s' "$resolved" 2>/dev/null || true)"
+      mode="$(stat -c '%a' "$resolved" 2>/dev/null || true)"
+      owner="$(stat -c '%U' "$resolved" 2>/dev/null || true)"
+      group="$(stat -c '%G' "$resolved" 2>/dev/null || true)"
+      mtime="$(stat -c '%y' "$resolved" 2>/dev/null | awk '{print $1" "$2}' || true)"
+      [[ -n "$size_b" ]] && size_h="$(_fmt_size "$size_b")"
+    fi
+
+    if command -v file >/dev/null 2>&1; then
+      typ="$(file -b "$resolved" 2>/dev/null || true)"
+    fi
+
+    [[ -n "$typ" ]] && print -r -- "  type: $typ"
+    [[ -n "$size_h" ]] && print -r -- "  size: $size_h"
+    [[ -n "$mode$owner$group" ]] && print -r -- "  perms: $mode  owner=$owner group=$group"
+    [[ -n "$mtime" ]] && print -r -- "  mtime: $mtime"
+
+    # writable binary checks (quietly high value)
+    if [[ -n "$dir" ]]; then
+      if [[ -w "$resolved" ]]; then
+        print -P "  $_p_warn file is writable by current user"
+      fi
+      if [[ -w "$dir" ]]; then
+        print -P "  $_p_warn parent dir is writable: $dir"
+      fi
+    fi
+
+    # package ownership
+    local own
+    own="$(_owner_of_file "$resolved" 2>/dev/null || true)"
+    if [[ -n "$own" ]]; then
+      print -r -- "  origin: $own"
+    else
+      print -r -- "  origin: unknown (not owned by known pkg managers)"
+    fi
+
+    # hash
+    if (( want_hash )); then
+      local h
+      h="$(_hash_file "$hash_alg" "$resolved" 2>/dev/null || true)"
+      if [[ -n "$h" ]]; then
+        print -r -- "  hash:$hash_alg $h"
+      else
+        print -P "  $_p_warn hash:$hash_alg unavailable (missing tool?)"
+      fi
+    fi
+
+    # signatures
+    local did_sig=0
+    case "$resolved" in
+      (*.rpm|*.deb|*.apk|*.pkg.tar*|*.AppImage|*.tar*|*.zip|*.gz|*.xz|*.zst)
+        want_sig=1
+        ;;
+    esac
+
+    if (( want_sig )); then
+      if [[ -f "$resolved" ]]; then
+        if _sig_try_pkgfile "$resolved"; then
+          did_sig=1
+        fi
+      fi
+      if (( did_sig == 0 )); then
+        print -r -- "  signature: none detected / no verifier available"
+      fi
+    else
+      print -r -- "  signature: skipped"
+    fi
+  done
+
+  return "$any_bad"
+}
+
