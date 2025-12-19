@@ -182,3 +182,241 @@ heat() {
   fi
 }
 
+
+health() {
+  emulate -L zsh
+  setopt localoptions err_return no_unset pipefail
+
+  local rc=0
+
+  local _pfx_ok="%F{green}ok%f"
+  local _pfx_warn="%F{yellow}warn%f"
+  local _pfx_bad="%F{red}bad%f"
+  local _pfx_note="%F{cyan}::%f"
+
+  local cache_gb="${HEALTH_CACHE_GB:-5}"
+  local smart_warn_pct="${HEALTH_SMART_WARN_PCT:-80}"
+  local smart_bad_pct="${HEALTH_SMART_BAD_PCT:-95}"
+
+  print -P "$_pfx_note systemd"
+
+  if command -v systemctl >/dev/null 2>&1; then
+    local failed
+    failed=$(systemctl --failed --no-legend 2>/dev/null | sed '/^[[:space:]]*$/d' || true)
+    if [[ -n "$failed" ]]; then
+      print -P "$_pfx_bad failed units:"
+      print -r -- "$failed" | sed 's/^/  /'
+      rc=1
+    else
+      print -P "$_pfx_ok no failed units"
+    fi
+  else
+    print -P "$_pfx_warn systemctl not found"
+  fi
+
+  print -P "$_pfx_note ssd smart"
+
+  if ! command -v smartctl >/dev/null 2>&1; then
+    print -P "$_pfx_warn smartctl not found (smartmontools)"
+  else
+    local -a disks
+    disks=("${(@f)$(lsblk -dno NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}')}")
+
+    if [[ ${#disks[@]} -eq 0 ]]; then
+      print -P "$_pfx_warn no disks found"
+    else
+      local d rot dev out try_sudo
+      for d in "${disks[@]}"; do
+        dev="/dev/$d"
+        rot=""
+        [[ -r "/sys/block/$d/queue/rotational" ]] && rot="$(<"/sys/block/$d/queue/rotational")"
+        [[ "$rot" == "1" ]] && continue
+
+        out=""
+        if smartctl -a "$dev" >/dev/null 2>&1; then
+          out="$(smartctl -a "$dev" 2>/dev/null || true)"
+        elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+          out="$(sudo -n smartctl -a "$dev" 2>/dev/null || true)"
+        fi
+
+        if [[ -z "$out" ]]; then
+          print -P "$_pfx_warn $dev: cannot read smart data (need perms?)"
+          continue
+        fi
+
+        local pct_used crit reall pend uncor nvme_media nvme_errlog
+        pct_used="$(print -r -- "$out" | awk -F: '/^[[:space:]]*Percentage Used:/{gsub(/[^0-9]/,"",$2);print $2;exit}')"
+        crit="$(print -r -- "$out" | awk -F: '/^[[:space:]]*Critical Warning:/{gsub(/^[[:space:]]*/,"",$2);print $2;exit}')"
+        nvme_media="$(print -r -- "$out" | awk -F: '/^[[:space:]]*Media and Data Integrity Errors:/{gsub(/[^0-9]/,"",$2);print $2;exit}')"
+        nvme_errlog="$(print -r -- "$out" | awk -F: '/^[[:space:]]*Error Information Log Entries:/{gsub(/[^0-9]/,"",$2);print $2;exit}')"
+
+        reall="$(print -r -- "$out" | awk '$2=="Reallocated_Sector_Ct"{print $10;exit}')"
+        pend="$(print -r -- "$out" | awk '$2=="Current_Pending_Sector"{print $10;exit}')"
+        uncor="$(print -r -- "$out" | awk '$2=="Offline_Uncorrectable"{print $10;exit}')"
+
+        local bad=0 warn=0
+        [[ -n "$pct_used" && "$pct_used" -ge "$smart_warn_pct" ]] && warn=1
+        [[ -n "$pct_used" && "$pct_used" -ge "$smart_bad_pct" ]] && bad=1
+        [[ -n "$reall" && "$reall" -gt 0 ]] && warn=1
+        [[ -n "$pend" && "$pend" -gt 0 ]] && bad=1
+        [[ -n "$uncor" && "$uncor" -gt 0 ]] && bad=1
+        [[ -n "$nvme_media" && "$nvme_media" -gt 0 ]] && bad=1
+        [[ -n "$nvme_errlog" && "$nvme_errlog" -gt 0 ]] && warn=1
+
+        local summary=""
+        [[ -n "$pct_used" ]] && summary+=" pct_used=${pct_used}%"
+        [[ -n "$reall" ]] && summary+=" reallocated=$reall"
+        [[ -n "$pend" ]] && summary+=" pending=$pend"
+        [[ -n "$uncor" ]] && summary+=" uncorrectable=$uncor"
+        [[ -n "$nvme_media" ]] && summary+=" media_err=$nvme_media"
+        [[ -n "$nvme_errlog" ]] && summary+=" errlog=$nvme_errlog"
+        [[ -n "$crit" ]] && summary+=" crit=${crit}"
+
+        if (( bad )); then
+          print -P "$_pfx_bad $dev:$summary"
+          rc=1
+        elif (( warn )); then
+          print -P "$_pfx_warn $dev:$summary"
+        else
+          print -P "$_pfx_ok $dev:${summary:-" smart ok"}"
+        fi
+      done
+    fi
+  fi
+
+  print -P "$_pfx_note caches"
+
+  local -a paths
+  paths=(
+    "$HOME/.cache"
+    "$HOME/.local/share/Trash"
+    "$HOME/.npm"
+    "$HOME/.pnpm-store"
+    "$HOME/.cache/pip"
+    "$HOME/.cache/yarn"
+    "$HOME/.cache/go-build"
+    "$HOME/.cargo/registry"
+    "$HOME/.gradle/caches"
+    "$HOME/.m2/repository"
+    "/var/cache"
+    "/var/log/journal"
+  )
+
+  local du_bytes_ok=0
+  du -sb "$HOME" >/dev/null 2>&1 && du_bytes_ok=1
+
+  local cache_bytes=$(( cache_gb * 1024 * 1024 * 1024 ))
+  local -a lines
+  lines=()
+
+  local p sz
+  for p in "${paths[@]}"; do
+    [[ -e "$p" ]] || continue
+    if (( du_bytes_ok )); then
+      sz="$(du -sb "$p" 2>/dev/null | awk '{print $1}' || true)"
+    else
+      sz="$(du -sk "$p" 2>/dev/null | awk '{print $1*1024}' || true)"
+    fi
+    [[ -n "$sz" ]] || continue
+    lines+=("${sz}\t${p}")
+  done
+
+  if [[ ${#lines[@]} -eq 0 ]]; then
+    print -P "$_pfx_warn no cache dirs readable"
+  else
+    local fmt=0
+    command -v numfmt >/dev/null 2>&1 && fmt=1
+
+    local sorted
+    sorted="$(print -r -- "${lines[@]}" | sort -nr -k1,1 | head -n 12)"
+
+    local any_bloated=0
+    while IFS=$'\t' read -r sz p; do
+      [[ -n "$sz" && -n "$p" ]] || continue
+      local h="$sz"
+      (( fmt )) && h="$(numfmt --to=iec --suffix=B "$sz" 2>/dev/null || echo "$sz")"
+      if [[ "$sz" -ge "$cache_bytes" ]]; then
+        print -P "$_pfx_warn $h  $p"
+        any_bloated=1
+      else
+        print -P "$_pfx_ok $h  $p"
+      fi
+    done <<< "$sorted"
+
+    (( any_bloated )) && rc=1
+  fi
+
+  return "$rc"
+}
+
+bloat() {
+  emulate -L zsh
+  setopt localoptions err_return no_unset pipefail
+
+  local days=30 n=50 allfs=0 root="/"
+
+  local opt
+  while getopts ":d:n:ah" opt; do
+    case "$opt" in
+      d) days="$OPTARG" ;;
+      n) n="$OPTARG" ;;
+      a) allfs=1 ;;
+      h)
+        cat <<'EOF'
+bloat [-d days] [-n top] [-a] [path]
+
+- finds largest files not modified in >days
+- defaults: days=30, top=50, path=/
+- -a scans across mountpoints (no -xdev)
+EOF
+        return 0
+        ;;
+      \?) echo "unknown option: -$OPTARG" >&2; return 1 ;;
+      :)  echo "missing value for -$OPTARG" >&2; return 1 ;;
+    esac
+  done
+  shift $((OPTIND - 1))
+  [[ -n ${1-} ]] && root="$1"
+
+  command -v find >/dev/null 2>&1 || { echo "find not found" >&2; return 1; }
+
+  local fmt=0
+  command -v numfmt >/dev/null 2>&1 && fmt=1
+
+  local -a prune
+  prune=(
+    -path /proc -o -path /sys -o -path /dev -o -path /run -o -path /tmp
+    -o -path /var/run -o -path /var/tmp
+  )
+
+  local -a base
+  base=()
+  (( allfs )) || base+=(-xdev)
+
+  local test_printf=0
+  find "$root" -maxdepth 0 -printf "" >/dev/null 2>&1 && test_printf=1
+
+  if (( test_printf )); then
+    find "$root" "${base[@]}" \( "${prune[@]}" \) -prune -o \
+      -type f -mtime +"$days" -printf '%s\t%TY-%Tm-%Td\t%p\n' 2>/dev/null \
+      | sort -nr -k1,1 | head -n "$n" \
+      | while IFS=$'\t' read -r sz dt p; do
+          [[ -n "$sz" && -n "$p" ]] || continue
+          local h="$sz"
+          (( fmt )) && h="$(numfmt --to=iec --suffix=B "$sz" 2>/dev/null || echo "$sz")"
+          printf "%-10s  %s  %s\n" "$h" "$dt" "$p"
+        done
+  else
+    find "$root" "${base[@]}" \( "${prune[@]}" \) -prune -o \
+      -type f -mtime +"$days" -print0 2>/dev/null \
+      | xargs -0r stat -c '%s\t%y\t%n' 2>/dev/null \
+      | sort -nr -k1,1 | head -n "$n" \
+      | while IFS=$'\t' read -r sz dt p; do
+          [[ -n "$sz" && -n "$p" ]] || continue
+          dt="${dt%% *}"
+          local h="$sz"
+          (( fmt )) && h="$(numfmt --to=iec --suffix=B "$sz" 2>/dev/null || echo "$sz")"
+          printf "%-10s  %s  %s\n" "$h" "$dt" "$p"
+        done
+  fi
+}
