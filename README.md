@@ -1,6 +1,6 @@
 # zshfuncs
 
-I hate the mental drag of clicking through UIs, so I run almost everything from the terminal. This is a terminal toolkit with over 200 commands covering system administration, cloud ops, workflows, and everyday automations that I use and much more.
+I hate the mental drag of clicking through UIs.
 
 ## Security & Authentication
 
