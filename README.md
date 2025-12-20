@@ -4,6 +4,18 @@ I hate the mental drag of clicking through UIs, so I run almost everything from 
 
 ## Security & Authentication
 
+### OpSec
+
+- `persist` - Persistence diff scanner. Snapshots system and user persistence surfaces (systemd services and timers, cron, authorized_keys, shell rc drift, writable PATH execs). Outputs a clean unified diff against the last snapshot or baseline. Read-only. No remediation. No daemon.
+
+- `netwatch` - Network egress visibility. Shows active outbound TCP and UDP connections with process mapping when possible, highlights long-lived and unexpected connections, and best-effort annotates remote IPs with ASN and country when data is available. Read-only. No blocking. No capture unless explicitly requested.
+
+- `verify` - Install-time sanity checker. Given a path or command, prints origin and resolved install path, file size, hash, and basic signature hints when available. Highlights binaries coming from temp or cache locations. Awareness only, no trust decisions and no blocking.
+
+- `anomaly` - Runtime behavior scanner. Flags suspicious runtime patterns like execution from `/tmp` or `/dev/shm` or cache dirs, processes with deleted executables, odd parent-child trees, and activity spikes that look wrong for the current state. Outputs a ranked list with reasons, no verdicts.
+
+- `panicnet` - Emergency containment toggle. Drops all outbound traffic except SSH for immediate containment mode.
+
 ### Fingerprint Authentication
 
 - `fp_setup_from_scratch` - Complete fingerprint setup workflow from restart to enrollment
