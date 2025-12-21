@@ -1,7 +1,5 @@
 # zshfuncs
 
-I hate the mental drag of clicking through UIs.
-
 ## Security & Authentication
 
 ### OpSec
