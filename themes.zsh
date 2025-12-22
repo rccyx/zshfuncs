@@ -26,7 +26,7 @@ themes() {
       dircolors_file="$root/dircolors/brown"
       tmux_file="$root/tmux/brown.conf"
       hypr_theme_file="brown.conf"
-      wallpaper_file="$root/.wallpapers/brown.png"
+      wallpaper_file="$root/.wallpapers/brown.jpg"
       ;;
     catppuccin)
       starship_file="$root/starship/starship-catppuccin.toml"
