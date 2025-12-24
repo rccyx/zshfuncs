@@ -71,7 +71,7 @@
 
 ### 2FA & Passwords
 
-- `tfa` - Interactive TOTP manager with fzf picker and oathtool backend
+- `tfa` - Interactive TOTP manager with fzf picker and [totpyx](https://github.com/rccyx/totpyx) backend
 - `tfa.add` - Add new 2FA secret
 - `tfa.use` - Generate and copy TOTP code
 - `tfa.list` - List stored secrets with masked preview
