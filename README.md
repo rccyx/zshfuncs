@@ -14,6 +14,10 @@
 
 - `panicnet` - Emergency containment toggle. Drops all outbound traffic except SSH for immediate containment mode.
 
+- `screenpeek` - Live capture visibility. Shows which processes currently have access to display sockets (Wayland/X11) and active PipeWire capture streams (screen, mic, desktop audio). Maps streams to PID and application when possible. Read-only. Best run with sudo for cross-user visibility.
+
+- `recentexec` - Executed-code window scanner. Lists executables that actually ran recently from user-writable locations (e.g. /tmp, /dev/shm, cache dirs, Downloads) within a configurable time window. Focuses on execution, not file presence. Read-only.
+
 ### Fingerprint Authentication
 
 - `fp_setup_from_scratch` - Complete fingerprint setup workflow from restart to enrollment
