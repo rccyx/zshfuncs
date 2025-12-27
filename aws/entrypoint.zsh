@@ -3,15 +3,13 @@ if [[ -n ${__ZSF_AWS_ENTRYPOINT_SOURCED-} ]]; then
 fi
 typeset -g __ZSF_AWS_ENTRYPOINT_SOURCED=1
 
-emulate -L zsh
-setopt null_glob
-
 __zf_script="${(%):-%N}"
 __zf_dir="${__zf_script:A:h}"
 __self_base="${__zf_script:A:t}"
 
 for f in "$__zf_dir"/*.zsh; do
   [[ ! -r "$f" ]] && continue
+  [[ "${f:t}" == "utils.zsh" ]] && continue
   [[ "${f:t}" == "$__self_base" ]] && continue
   source "$f"
 done
@@ -22,3 +20,4 @@ if ! whence -w compdef >/dev/null 2>&1; then
 fi
 
 unset __zf_script __zf_dir __self_base
+
